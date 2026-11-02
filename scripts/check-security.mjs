@@ -3,6 +3,7 @@
 //  2. app/(vendor 제외)에 service_role / sb_secret_ / sk_ / secret 문자열 0건
 //  3. 저장소 전체에 실제 키처럼 생긴 값 0건(sb_secret_…, JWT, sk_live/sk_test, PEM 개인키)
 //  4. app/index.html 에 CSP meta 존재, vendor 스크립트에 integrity 속성 + VENDOR.md 의 해시와 일치
+//  5. app/config.js 는 프로젝트 URL + publishable 키만, CSP connect-src 와 같은 호스트
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, relative, sep } from 'node:path';
@@ -79,6 +80,16 @@ for (const m of html.matchAll(/<script[^>]*src="(vendor\/[^"]+)"[^>]*>/g)) {
   const actual = 'sha384-' + createHash('sha384').update(readFileSync(join(ROOT, 'app', src))).digest('base64');
   if (actual !== sri) problems.push(`app/index.html: ${src} integrity 불일치`);
   if (!vendorMd.includes(actual)) problems.push(`VENDOR.md: ${src} 해시 기록 없음`);
+}
+
+// 5. config.js: URL 은 https://<ref>.supabase.co, 키는 publishable(sb_publishable_…) 또는 'TODO' 만
+const cfg = text(join(ROOT, 'app/config.js'));
+const cfgUrl = /SUPABASE_URL\s*=\s*'([^']*)'/.exec(cfg)?.[1];
+const cfgKey = /SUPABASE_PUBLISHABLE_KEY\s*=\s*'([^']*)'/.exec(cfg)?.[1];
+if (!(cfgUrl === 'TODO' || /^https:\/\/[a-z0-9]{20}\.supabase\.co$/.test(cfgUrl ?? ''))) problems.push('app/config.js: SUPABASE_URL 형식');
+if (!(cfgKey === 'TODO' || /^sb_publishable_[A-Za-z0-9_-]+$/.test(cfgKey ?? ''))) problems.push('app/config.js: publishable 키만 허용(sb_publishable_…)');
+if (cfgUrl && cfgUrl !== 'TODO' && !html.includes(`connect-src 'self' ${cfgUrl};`)) {
+  problems.push('app/index.html: CSP connect-src 가 config.js 의 SUPABASE_URL 과 다름');
 }
 
 if (problems.length) {
