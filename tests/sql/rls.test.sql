@@ -71,6 +71,9 @@ begin
   return n;
 end $$;
 
+-- 마이그레이션이 함수 기본 PUBLIC 실행 권한을 없앴으므로 시험 도우미는 명시적으로 허용
+grant execute on all functions in schema t to public;
+
 -- ═════════ A. 시드·구조 ═════════
 select t.check((select count(*) from sp.participants) = 3, 'A1 참가자 3명');
 select t.check((select count(*) from sp.accounts) = 6, 'A2 계좌 6개');
@@ -217,6 +220,42 @@ do $$ declare v text; begin
   exception when others then v := sqlstate; end;
   perform t.check(v = '42501', 'G4 원장 delete 금지(append-only)', v);
 end $$;
+
+do $$ declare v text; begin
+  begin
+    truncate sp.cash_ledger cascade;
+    v := 'ok';
+  exception when others then v := sqlstate; end;
+  perform t.check(v = '42501', 'G5 원장 truncate 금지(소유자도)', v);
+end $$;
+select t.check((select count(*) from sp.cash_ledger) > 0, 'G6 truncate 시도 뒤 원장 그대로');
+
+-- ═════════ H. 함수 실행 권한 ═════════
+-- 앞으로 만들 함수: 기본 권한으로 PUBLIC EXECUTE 가 붙지 않아야 한다(리뷰 M1 재현)
+create function sp.future_fn() returns int language sql security definer set search_path = '' as $$ select 1 $$;
+select t.check(t.try('미등록', 'select sp.future_fn()') = '42501', 'H1 새로 만든 sp 함수: 미등록 authenticated 실행 거부',
+               t.try('미등록', 'select sp.future_fn()'));
+select t.check(t.try('anon', 'select sp.future_fn()') = '42501', 'H2 새로 만든 sp 함수: anon 실행 거부');
+select t.check(exists (select 1 from pg_default_acl d where d.defaclobjtype = 'f' and d.defaclnamespace = 0
+                         and d.defaclrole = 'postgres'::regrole),
+               'H3 pg_default_acl 에 함수 전역 기본 권한 항목 있음');
+drop function sp.future_fn();
+
+-- sp 의 모든 함수: PUBLIC·anon EXECUTE 없음, authenticated 는 허용 목록만
+-- (함수가 늘면 아래 허용 목록만 갱신)
+select t.check(
+  not exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE')
+    and p.proacl is not null
+    and not has_function_privilege('anon', p.oid, 'EXECUTE')
+    and has_function_privilege('authenticated', p.oid, 'EXECUTE') = (p.proname in ('me', 'request_fund')),
+  format('H4 sp.%s(%s) 실행 권한: PUBLIC·anon 없음, authenticated %s', p.proname, pg_get_function_identity_arguments(p.oid),
+         case when p.proname in ('me', 'request_fund') then '허용' else '없음' end),
+  coalesce(p.proacl::text, 'proacl null(기본 권한 = PUBLIC)'))
+from pg_proc p
+where p.pronamespace = 'sp'::regnamespace
+order by p.proname;
+select t.check((select count(*) from pg_proc where pronamespace = 'sp'::regnamespace) >= 5, 'H5 sp 함수 검사 대상 5개 이상',
+               (select count(*)::text from pg_proc where pronamespace = 'sp'::regnamespace));
 
 -- ═════════ 결과 ═════════
 \pset footer off

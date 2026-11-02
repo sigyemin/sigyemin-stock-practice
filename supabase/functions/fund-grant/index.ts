@@ -6,6 +6,7 @@ import { getCaller, type UserScopedDb } from '../_shared/auth.ts';
 import { createHandler, type Currency } from './handler.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+// TODO(L4): 배포 직후 SUPABASE_PUBLISHABLE_KEYS 가 주입되는지 스모크 테스트로 확인. 없으면 빈 키 → 호출 실패(fail-closed).
 const PUBLISHABLE = JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}')['default'] ?? '';
 const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') ?? 'https://sigyemin.github.io')
   .split(',')

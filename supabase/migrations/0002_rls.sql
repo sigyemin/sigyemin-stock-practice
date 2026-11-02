@@ -8,8 +8,11 @@ revoke all on all tables in schema sp from public, anon, authenticated;
 revoke all on all sequences in schema sp from public, anon, authenticated;
 revoke execute on all functions in schema sp from public, anon, authenticated;
 
--- 이후 이 스키마에 만드는 함수도 기본 실행 권한(PUBLIC)을 갖지 않게
-alter default privileges in schema sp revoke execute on functions from public;
+-- 앞으로 만드는 함수도 기본 실행 권한(PUBLIC)을 갖지 않게.
+-- 함수의 PUBLIC EXECUTE 는 "전역" 기본 권한이라 IN SCHEMA 형태로는 지워지지 않는다 → 전역 형태로.
+-- (마이그레이션을 실행하는 역할 = postgres 가 만드는 함수에 적용. 모든 스키마에 영향:
+--  이후 함수는 필요한 역할에 grant execute 를 명시해야 한다.)
+alter default privileges for role postgres revoke execute on functions from public;
 
 grant usage on schema sp to authenticated;
 

@@ -123,6 +123,9 @@ end $$;
 create trigger cash_ledger_no_update before update or delete on sp.cash_ledger
   for each row execute function sp.ledger_immutable();
 
+create trigger cash_ledger_no_truncate before truncate on sp.cash_ledger
+  for each statement execute function sp.ledger_immutable();
+
 -- ───────── 지급 함수(내부용) ─────────
 -- fund_grants 1행 + 원장 1줄을 한 트랜잭션에. 금액 형식만 검사하고 권한은 검사하지 않는다
 -- → 브라우저(anon·authenticated)에는 실행 권한을 주지 않는다(0002_rls.sql).
