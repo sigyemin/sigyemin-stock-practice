@@ -1,0 +1,12 @@
+{
+  "name": "sigyemin-stock-practice",
+  "private": true,
+  "type": "module",
+  "description": "가상 돈으로 하는 주식 매매 연습 웹앱",
+  "engines": { "node": ">=22.6" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test tests/unit/*.test.js",
+    "check:security": "node scripts/check-security.mjs",
+    "test:sql": "bash tests/sql/run.sh"
+  }
+}
