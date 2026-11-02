@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- TODO(L2): Supabase 프로젝트가 생기면 connect-src 를 https://<프로젝트 ref>.supabase.co 로 좁힌다(config.js 값 넣을 때 함께). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://*.supabase.co; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="theme-color" content="#1f6feb">
+  <title>주식 연습</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="vendor/supabase-2.118.0.umd.js" integrity="sha384-TcHRA3zBbn+Lexh5n+Oil4guNPOS3rjNDpGRAN46u/s/mB2IZ50ceC6TYDU2yvgK" crossorigin="anonymous"></script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <main id="app"><p class="notice">불러오는 중…</p></main>
+  <noscript>이 앱은 JavaScript 가 필요합니다.</noscript>
+</body>
+</html>
