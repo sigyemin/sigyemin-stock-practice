@@ -48,6 +48,7 @@ export const ORDER_ERRORS = {
   insufficient_funds: '가용 잔고가 모자랍니다(대기 주문에 묶인 돈 제외).',
   insufficient_qty: '매도할 수 있는 수량이 모자랍니다(대기 매도 제외).',
   unknown_instrument: '추가되지 않은 종목입니다.',
+  kr_delayed_orders_unavailable: '한국 시세가 지연 모드라 지금은 한국 주문을 받지 않습니다(실시간 모드로 돌아오면 가능).',
   not_cancellable: '이미 끝난 주문입니다.',
   not_found: '주문을 찾지 못했습니다.',
   not_registered: '등록되지 않은 계정입니다.',
