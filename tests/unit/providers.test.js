@@ -79,7 +79,7 @@ test('allowlist: KIS 코드에 주문·잔고·계좌 관련 경로·TR 문자�
   for (const bad of ['/trading/', 'order', 'balance', 'TTTC', 'VTTC', 'CANO', 'ACNT_PRDT_CD', 'hashkey']) {
     assert.equal(src.includes(bad), false, bad);
   }
-  for (const r of KIS_ALLOW) assert.ok(String(r.path).includes('/quotations/') || r.path === '/oauth2/tokenP');
+  for (const r of KIS_ALLOW) assert.ok(String(r.path).includes('/quotations/') || r.path === '/oauth2/tokenP' || r.path === '/uapi/domestic-stock/v1/ksdinfo/dividend');
 });
 
 test('allowlist: Alpaca 는 시세 2개 + assets 조회만, 주문·계좌 경로 차단', () => {

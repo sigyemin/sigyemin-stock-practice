@@ -1,4 +1,4 @@
--- 운영 설정(M2 예약 실행). 마이그레이션이 아니다 — 0004 적용 + 함수 배포 뒤 운영에서 한 번 실행한다.
+-- 운영 설정(M2 예약 실행 + M4 마감·세금). 마이그레이션이 아니다 — 0004 적용 + 함수 배포 뒤 운영에서 한 번 실행한다.
 -- 근거: Supabase 문서 "Scheduling Edge Functions"(pg_cron + pg_net, 인증값은 Vault 권장)
 --   https://supabase.com/docs/guides/functions/schedule-functions
 -- 인증 방식(우리 쪽):
@@ -33,7 +33,10 @@ on conflict (key) do nothing;
 --    tick-kr  : 월~금 00:00~06:59 UTC = 한국 09:00~15:59, 매분
 --    tick-us  : 월~금 13:00~21:59 UTC (서머타임 13:30~20:00 / 겨울 14:30~21:00 을 모두 덮음), 매분
 --    fx-sync  : 월~금 02:20, 04:20 UTC = 한국 11:20, 13:20 (11시 전후 고시 뒤)
---    ref-sync : 일 22:40 UTC = 한국 월 07:40, 주 1회(KIS 휴장일 조회는 "가급적 1일 1회")
+--    ref-sync : 매일 22:40 UTC = 한국 07:40(휴장일 + M4 배당 일정. KIS 휴장일 조회는 "가급적 1일 1회")
+--    M4 daily-close : 매일 07:10 UTC(한국 16:10, 한국장 마감 뒤) · 22:30 UTC(한국 07:30, 미국장 마감 뒤)
+--       → 결제일 환율·실현손익, 배당 권리 확정·지급. 같은 날 여러 번 돌려도 한 번만 처리된다.
+--    M4 tax-annual  : 매일 14:50 UTC = 한국 23:50(1월 1일 지난해 확정, 5월 31일 23:30 이후 자동 차감)
 do $$
 declare
   j record;
@@ -43,7 +46,10 @@ begin
       ('sp-tick-kr',  '* 0-6 * * 1-5',   'tick-kr'),
       ('sp-tick-us',  '* 13-21 * * 1-5', 'tick-us'),
       ('sp-fx-sync',  '20 2,4 * * 1-5',  'fx-sync'),
-      ('sp-ref-sync', '40 22 * * 0',     'ref-sync')
+      ('sp-ref-sync', '40 22 * * *',     'ref-sync'),
+      ('sp-daily-close-kr', '10 7 * * *',  'daily-close'),
+      ('sp-daily-close-us', '30 22 * * *', 'daily-close'),
+      ('sp-tax-annual', '50 14 * * *',   'tax-annual')
     ) as v(name, schedule, fn)
   loop
     perform cron.schedule(j.name, j.schedule, format($job$

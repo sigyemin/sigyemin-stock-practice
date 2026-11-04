@@ -3,9 +3,10 @@ create table t.ops_results (seq serial, name text, ok boolean, detail text);
 create function t.ok(c boolean, n text, d text default null) returns void language sql as
 $$ insert into t.ops_results (name, ok, detail) values (n, coalesce(c, false), d) $$;
 
-select t.ok((select count(*) from cron.job where jobname like 'sp-%') = 4, 'O1 작업 4개 등록');
+select t.ok((select count(*) from cron.job where jobname like 'sp-%') = 7, 'O1 작업 7개 등록(M2 4 + M4 3)');
 select t.ok((select schedule from cron.job where jobname = 'sp-tick-kr') = '* 0-6 * * 1-5', 'O2 tick-kr 일정(UTC 0-6 = 한국 9-15시)');
 select t.ok((select schedule from cron.job where jobname = 'sp-tick-us') = '* 13-21 * * 1-5', 'O3 tick-us 일정');
+select t.ok((select schedule from cron.job where jobname = 'sp-tax-annual') = '50 14 * * *', 'O3b tax-annual 일정(UTC 14:50 = 한국 23:50, 5/31 23:30 이후 자동 차감)');
 select t.ok(length((select value from sp.server_kv where key = 'cron_token')) = 64
             and (select value from sp.server_kv where key = 'cron_token') ~ '^[0-9a-f]{64}$', 'O4 cron 토큰 64자 16진수');
 
@@ -18,10 +19,13 @@ do $$ declare c text; begin
     execute c;
   end loop;
 end $$;
-select t.ok((select count(*) from net.calls) = 4, 'O6 작업 명령 4개 실행 → http_post 4번');
+select t.ok((select count(*) from net.calls) = 7, 'O6 작업 명령 7개 실행 → http_post 7번');
 select t.ok((select array_agg(url order by url) from net.calls) = array[
+  'https://cypwcghsxzrnjwtcrbzc.supabase.co/functions/v1/daily-close',
+  'https://cypwcghsxzrnjwtcrbzc.supabase.co/functions/v1/daily-close',
   'https://cypwcghsxzrnjwtcrbzc.supabase.co/functions/v1/fx-sync',
   'https://cypwcghsxzrnjwtcrbzc.supabase.co/functions/v1/ref-sync',
+  'https://cypwcghsxzrnjwtcrbzc.supabase.co/functions/v1/tax-annual',
   'https://cypwcghsxzrnjwtcrbzc.supabase.co/functions/v1/tick-kr',
   'https://cypwcghsxzrnjwtcrbzc.supabase.co/functions/v1/tick-us'], 'O7 호출 주소');
 select t.ok(not exists (select 1 from net.calls where headers->>'x-cron-token' is distinct from (select value from sp.server_kv where key = 'cron_token')),

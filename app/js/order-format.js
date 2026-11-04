@@ -52,6 +52,14 @@ export const ORDER_ERRORS = {
   not_cancellable: '이미 끝난 주문입니다.',
   not_found: '주문을 찾지 못했습니다.',
   not_registered: '등록되지 않은 계정입니다.',
+  // 환전·양도세 납부(M4)
+  invalid_direction: '환전 방향을 골라 주세요.',
+  invalid_amount: '금액을 확인해 주세요(원화는 원 단위, 달러는 센트까지).',
+  amount_too_small: '금액이 너무 작아 환전하면 0이 됩니다.',
+  fx_stale: '최근 7일 안의 고시 환율이 없어 지금은 환전할 수 없습니다.',
+  nothing_to_pay: '낼 세금이 없거나 이미 냈습니다.',
+  not_payment_period: '납부 기간(5월 1일~31일)이 아닙니다.',
+  invalid_year: '연도를 확인해 주세요.',
 };
 
 // 보유 평가(현재가 기준). 평균단가 = 수수료 포함 취득가 ÷ 수량

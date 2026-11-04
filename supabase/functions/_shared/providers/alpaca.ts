@@ -1,10 +1,12 @@
 // Alpaca — 미국 시세(IEX 무료). 시세 데이터 API 와 종목 정보(GET /v2/assets/{symbol}) 만.
 // 근거: docs.alpaca.markets — StockSnapshots(GET data.alpaca.markets/v2/stocks/snapshots, feed=iex),
 //       StockBars(GET /v2/stocks/bars, timeframe 1Min·1Day, limit 은 전체 합계, next_page_token),
-//       Get an Asset(GET paper-api.alpaca.markets/v2/assets/{symbol_or_asset_id}).
+//       Get an Asset(GET paper-api.alpaca.markets/v2/assets/{symbol_or_asset_id}),
+//       Corporate actions(GET data.alpaca.markets/v1/corporate-actions, types=cash_dividend, limit ≤ 1000, next_page_token
+//         → corporate_actions.cash_dividends[]: symbol, rate, ex_date, record_date, payable_date, currency).
 // 주문·계좌·포지션 경로는 이 파일에 없다(paper-api 호스트도 assets 한 경로만 허용).
 import { guardedFetch, type AllowRule, type FetchLike } from '../http.ts';
-import type { Bar } from './kis.ts';
+import { ymd, type Bar, type DividendRow } from './kis.ts';
 
 export const ALPACA_DATA = 'https://data.alpaca.markets';
 export const ALPACA_PAPER = 'https://paper-api.alpaca.markets';
@@ -12,6 +14,7 @@ export const ALPACA_PAPER = 'https://paper-api.alpaca.markets';
 export const ALPACA_ALLOW: AllowRule[] = [
   { method: 'GET', origin: ALPACA_DATA, path: '/v2/stocks/snapshots' },
   { method: 'GET', origin: ALPACA_DATA, path: '/v2/stocks/bars' },
+  { method: 'GET', origin: ALPACA_DATA, path: '/v1/corporate-actions' },
   { method: 'GET', origin: ALPACA_PAPER, path: /\/v2\/assets\/[A-Z][A-Z.]{0,9}/ },
 ];
 
@@ -45,6 +48,20 @@ export function createAlpaca(deps: AlpacaDeps) {
       return parseSnapshots(await get(`${ALPACA_DATA}/v2/stocks/snapshots?${q}`));
     },
     // timeframe '1Min' | '1Day'. 페이지를 따라가되 maxPages 로 끊는다
+    // 현금배당 일정(start~end, YYYY-MM-DD). 페이지를 따라가되 maxPages 로 끊는다
+    async dividends(symbols: string[], start: string, end: string, maxPages = 5) {
+      const out: DividendRow[] = [];
+      let token: string | null = null;
+      for (let i = 0; i < maxPages; i++) {
+        const q = new URLSearchParams({ symbols: symbols.join(','), types: 'cash_dividend', start, end, limit: '1000' });
+        if (token) q.set('page_token', token);
+        const body = await get(`${ALPACA_DATA}/v1/corporate-actions?${q}`);
+        out.push(...parseUsDividends(body));
+        token = typeof body.next_page_token === 'string' && body.next_page_token ? body.next_page_token : null;
+        if (!token) break;
+      }
+      return out;
+    },
     async bars(symbols: string[], timeframe: '1Min' | '1Day', start: string, maxPages = 5) {
       const out: Record<string, Bar[]> = {};
       let token: string | null = null;
@@ -126,4 +143,21 @@ export function parseAsset(a: Record<string, unknown>) {
     exchange: EXCHANGE[String(a.exchange)] ?? 'OTHER',
     currency: 'USD',
   } as const;
+}
+
+// 미국 현금배당: 달러만. 지급일·기준일이 없거나 금액 0 이하면 건너뛴다
+export function parseUsDividends(body: { corporate_actions?: { cash_dividends?: Record<string, unknown>[] } }): DividendRow[] {
+  const out: DividendRow[] = [];
+  for (const r of body?.corporate_actions?.cash_dividends ?? []) {
+    if (!r) continue;
+    const symbol = String(r.symbol ?? '');
+    const record = ymd(r.record_date);
+    const pay = ymd(r.payable_date);
+    const ex = ymd(r.ex_date);
+    const rate = Number(r.rate);
+    if (!US_SYMBOL.test(symbol) || !record || !pay || !Number.isFinite(rate) || rate <= 0 || pay < record) continue;
+    if (r.currency !== undefined && r.currency !== null && r.currency !== 'USD') continue;
+    out.push({ market: 'US', symbol, ex_date: ex, record_date: record, pay_date: pay, cash_per_share: rate, source: 'alpaca:corporate-actions' });
+  }
+  return out;
 }

@@ -55,7 +55,7 @@ export function jobDb(db: Db): JobDb {
       return data;
     },
     async watchSymbols(market, limit) {
-      // 관심 종목(세 참가자 합집합). 보유 종목은 M3 에서 positions 를 더한다.
+      // 관심 종목(세 참가자 합집합)
       const { data, error } = await db.from('watchlist').select('symbol, added_at').eq('market', market)
         .order('added_at', { ascending: true }).limit(500);
       check(error, 'watchlist');
@@ -84,6 +84,30 @@ export function jobDb(db: Db): JobDb {
       const { data, error } = await db.rpc('expire_orders', { p_market: market });
       check(error, 'expire_orders');
       return Number(data) || 0;
+    },
+    async dividendSymbols(market, limit) {
+      // 보유(열린 매수 묶음) 먼저, 그다음 관심 종목
+      const held = await db.from('tax_lots').select('symbol').eq('market', market).gt('qty_open', 0).limit(1000);
+      check(held.error, 'tax_lots');
+      const watch = await db.from('watchlist').select('symbol').eq('market', market).limit(500);
+      check(watch.error, 'watchlist');
+      const all = [...(held.data ?? []), ...(watch.data ?? [])].map((r: { symbol: string }) => r.symbol);
+      return [...new Set(all)].slice(0, limit);
+    },
+    async upsertDividendEvents(rows) {
+      const { data, error } = await db.rpc('upsert_dividend_events', { p_rows: rows });
+      check(error, 'dividend_events');
+      return Number(data) || 0;
+    },
+    async dailyClose() {
+      const { data, error } = await db.rpc('daily_close', {});
+      check(error, 'daily_close');
+      return (data ?? {}) as Record<string, number>;
+    },
+    async taxAnnual() {
+      const { data, error } = await db.rpc('tax_annual', {});
+      check(error, 'tax_annual');
+      return (data ?? {}) as Record<string, number>;
     },
     async saveCalendar(rows) {
       if (rows.length === 0) return;

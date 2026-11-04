@@ -1,0 +1,12 @@
+{
+  "_note": "합성 응답(필드 이름만 KIS 공식 예제 examples_llm/domestic_stock/ksdinfo_dividend 기준, 값·종목은 가짜). 날짜 표기 형식은 확인 못 해 두 가지를 섞음",
+  "rt_cd": "0",
+  "msg_cd": "MCA00000",
+  "msg1": "정상처리 되었습니다.",
+  "output1": [
+    { "record_date": "20261113", "sht_cd": "999993", "isin_name": "합성종목", "divi_kind": "중간", "face_val": "100", "per_sto_divi_amt": "361", "divi_rate": "0", "stk_divi_rate": "0", "divi_pay_dt": "2026/11/20", "stk_div_pay_dt": "", "odd_pay_dt": "", "stk_kind": "보통", "high_divi_gb": "" },
+    { "record_date": "2026/12/31", "sht_cd": "999993", "isin_name": "합성종목", "divi_kind": "결산", "face_val": "100", "per_sto_divi_amt": "1,200", "divi_rate": "0", "stk_divi_rate": "0", "divi_pay_dt": "20270415", "stk_div_pay_dt": "", "odd_pay_dt": "", "stk_kind": "보통", "high_divi_gb": "" },
+    { "record_date": "20270331", "sht_cd": "999993", "isin_name": "합성종목", "divi_kind": "분기", "face_val": "100", "per_sto_divi_amt": "300", "divi_rate": "0", "stk_divi_rate": "0", "divi_pay_dt": "", "stk_div_pay_dt": "", "odd_pay_dt": "", "stk_kind": "보통", "high_divi_gb": "" },
+    { "record_date": "20261231", "sht_cd": "999993", "isin_name": "합성종목", "divi_kind": "결산", "face_val": "100", "per_sto_divi_amt": "0", "divi_rate": "0", "stk_divi_rate": "5", "divi_pay_dt": "", "stk_div_pay_dt": "20270410", "odd_pay_dt": "", "stk_kind": "보통", "high_divi_gb": "" }
+  ]
+}
