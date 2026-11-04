@@ -75,6 +75,11 @@ export function jobDb(db: Db): JobDb {
       const { error } = await db.from('fx_rates').upsert({ rate_date: date, usdkrw, source, fetched_at: new Date().toISOString() });
       check(error, 'fx');
     },
+    async fxDates(from, to) {
+      const { data, error } = await db.from('fx_rates').select('rate_date').gte('rate_date', from).lte('rate_date', to);
+      check(error, 'fx_dates');
+      return (data ?? []).map((r: { rate_date: string }) => r.rate_date);
+    },
     async processOrders(market) {
       const { data, error } = await db.rpc('process_orders', { p_market: market });
       check(error, 'process_orders');

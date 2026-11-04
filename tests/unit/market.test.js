@@ -71,6 +71,7 @@ function memDb(over = {}) {
     saveQuotes: async (r) => saved.quotes.push(...r),
     saveCandles: async (r) => saved.candles.push(...r),
     saveFx: async (d, v, s) => saved.fx.push({ d, v, s }),
+    fxDates: async () => [],
     saveCalendar: async (r) => saved.calendar.push(...r),
     processOrders: async (m) => { saved.processed = [...(saved.processed ?? []), m]; return 1; },
     expireOrders: async (m) => { saved.expired = [...(saved.expired ?? []), m]; return 2; },
@@ -160,6 +161,22 @@ test('fx-sync: 고시값 저장, 아직 없으면 저장하지 않음', async ()
   assert.equal((await runFxSync({ db, exim: { usdkrw: async () => null }, now })).reason, 'no_rate_yet');
   assert.equal(saved.fx.length, 1);
   assert.equal((await runFxSync({ db, exim: null, now })).reason, 'koreaexim_not_configured');
+});
+
+test('fx-sync: 지난 날짜 중 빈 평일만 다시 받기(주말·휴장일·이미 있는 날 건너뜀, 최대 5번)', async () => {
+  const { db, saved } = memDb();
+  db.fxDates = async (from, to) => { saved.range = [from, to]; return ['2026-11-03']; };
+  db.calendar = async (_m, day) => (day === '2026-10-30' ? { trade_date: day, is_open: false } : null);
+  const asked = [];
+  const exim = { usdkrw: async (d) => { asked.push(d); if (d === '20261102') throw Object.assign(new Error('x'), { name: 'EximError' }); return d === '20261029' ? 1390 : null; } };
+  const r = await runFxSync({ db, exim, now: () => new Date('2026-11-04T03:00:00Z') });
+  assert.deepEqual(saved.range, ['2026-10-25', '2026-11-03']);
+  // 오늘 + 11-02(오류) · 10-29 · 10-28 · 10-27 · 10-26 (11-03 있음, 11-01·10-31 주말, 10-30 휴장)
+  assert.deepEqual(asked, ['20261104', '20261102', '20261029', '20261028', '20261027', '20261026']);
+  assert.equal(r.status, 'skipped');
+  assert.equal(r.backfilled, 1);
+  assert.deepEqual(r.errors, ['2026-11-02:EximError:']);
+  assert.deepEqual(saved.fx, [{ d: '2026-10-29', v: 1390, s: 'koreaexim' }]);
 });
 
 test('ref-sync: 한국 휴장일을 KR 행으로 저장', async () => {

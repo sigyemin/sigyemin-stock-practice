@@ -35,6 +35,7 @@ export type JobDb = {
   saveQuotes: (rows: QuoteRow[]) => Promise<void>;
   saveCandles: (rows: CandleRow[]) => Promise<void>;
   saveFx: (date: string, usdkrw: number, source: string) => Promise<void>;
+  fxDates: (from: string, to: string) => Promise<string[]>; // 그 기간에 저장된 고시 날짜
   saveCalendar: (rows: { market: 'KR' | 'US'; trade_date: string; is_open: boolean; source_url: string }[]) => Promise<void>;
   // 주문 처리(M3): DB 함수 sp.process_orders / sp.expire_orders
   processOrders: (market: 'KR' | 'US') => Promise<number>;
@@ -57,6 +58,8 @@ const errCode = (e: unknown) => {
   const o = e as { name?: string; code?: string; status?: number };
   return `${o?.name ?? 'Error'}:${o?.code ?? o?.status ?? ''}`;
 };
+
+const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 
 const toCandles = (market: 'KR' | 'US', symbol: string, tf: CandleRow['tf'], source: string, bars: Bar[]): CandleRow[] =>
   bars.map((b) => ({ ...b, market, symbol, tf, source }));
@@ -180,13 +183,44 @@ export async function runTickUs(d: { db: JobDb; alpaca: Alpaca | null; now: () =
 }
 
 // ───────── fx-sync: 수출입은행 매매기준율(없으면 저장하지 않음 → 읽는 쪽이 직전 고시값 사용) ─────────
+// 지난 날짜도 다시 채운다(리뷰 L13 b): 최근 FX_BACKFILL_DAYS 일 중 값이 없는 평일(휴장일 표에 '휴장'이면 건너뜀), 한 번에 최대 FX_BACKFILL_MAX_CALLS 번
+export const FX_BACKFILL_DAYS = 10;
+export const FX_BACKFILL_MAX_CALLS = 5;
+
 export async function runFxSync(d: { db: JobDb; exim: Exim | null; now: () => Date }): Promise<JobResult> {
   if (!d.exim) return { status: 'error', reason: 'koreaexim_not_configured' };
   const date = localDate(KR_TZ, d.now());
   const rate = await d.exim.usdkrw(date.replace(/-/g, ''));
-  if (rate === null) return { status: 'skipped', reason: 'no_rate_yet' };
-  await d.db.saveFx(date, rate, 'koreaexim');
-  return { status: 'ok', count: 1 };
+  if (rate !== null) await d.db.saveFx(date, rate, 'koreaexim');
+
+  const errors: string[] = [];
+  let backfilled = 0;
+  try {
+    const from = addDays(date, -FX_BACKFILL_DAYS);
+    const have = new Set(await d.db.fxDates(from, addDays(date, -1)));
+    let calls = 0;
+    for (let k = 1; k <= FX_BACKFILL_DAYS && calls < FX_BACKFILL_MAX_CALLS; k++) {
+      const day = addDays(date, -k);
+      const dow = new Date(`${day}T00:00:00Z`).getUTCDay();
+      if (dow === 0 || dow === 6 || have.has(day)) continue;
+      const cal = await d.db.calendar('KR', day);
+      if (cal && !cal.is_open) continue;
+      calls++;
+      try {
+        const v = await d.exim.usdkrw(day.replace(/-/g, ''));
+        if (v !== null) {
+          await d.db.saveFx(day, v, 'koreaexim');
+          backfilled++;
+        }
+      } catch (e) {
+        errors.push(`${day}:${errCode(e)}`);
+      }
+    }
+  } catch (e) {
+    errors.push(`backfill:${errCode(e)}`);
+  }
+  if (rate === null) return { status: 'skipped', reason: 'no_rate_yet', backfilled, errors };
+  return { status: 'ok', count: 1, backfilled, errors };
 }
 
 // ───────── ref-sync(하루 1회): 한국 휴장일(KIS chk-holiday) + 배당 일정(M4: KIS ksdinfo/dividend, Alpaca corporate-actions) ─────────
@@ -194,7 +228,6 @@ export async function runFxSync(d: { db: JobDb; exim: Exim | null; now: () => Da
 export const DIV_LOOKBACK_DAYS = 40;
 export const DIV_LOOKAHEAD_DAYS = 120;
 
-const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 
 export async function runRefSync(d: {
   db: JobDb;

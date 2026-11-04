@@ -128,12 +128,14 @@ do $$ declare r jsonb; sell_fill bigint; begin
 end $$;
 
 -- 체결일 환율이 너무 오래되면 비워 둔다(R10): 11-30 미국 체결, 마지막 고시 11-13(17일 전)
-do $$ declare r jsonb; begin
+do $$ declare r jsonb; dc jsonb; begin
   perform t.quote('US', 'TSTA', 250, '2026-11-30 14:59:50+00');
   r := t.po(1::smallint, 'US', 'TSTA', 'buy', 'market', 1, null, '2026-11-30 15:00:00+00');
   perform t.m4((select fx_rate_trade from sp.fills where order_id = (r->>'order_id')::bigint) is null, 'G10 고시값이 7일보다 오래되면 체결일 환율 비움(R10)', r::text);
-  perform sp.daily_close('2026-12-02 05:00:00+00');
+  dc := sp.daily_close('2026-12-02 05:00:00+00');
   perform t.m4((select fx_rate_settle from sp.fills where order_id = (r->>'order_id')::bigint) is null, 'G11 결제일 환율도 같은 기준으로 기다림');
+  perform t.m4((dc->>'fx_waiting')::int = 1 and dc->>'fx_waiting_oldest_settle' = '2026-12-01',
+               'L13a daily_close 결과에 환율 대기 미국 체결 수·가장 오래된 결제일', dc::text);
 end $$;
 
 -- 연간 확정·납부: 손익 원장은 합성 행(시험 전용)으로 뽀 +4,000,000 / −500,000, 봇 +10,000,000
@@ -150,6 +152,14 @@ do $$ declare b0 numeric; v text; begin
   perform t.m4((select tax_krw || '/' || status || '/' || due_date from sp.tax_assessments where participant_id = 2 and tax_year = 2026) = '220000/assessed/2027-05-31',
                'G13 1월 1일 확정: 뽀 220,000원, 기한 2027-05-31');
   perform t.m4((select tax_krw from sp.tax_assessments where participant_id = 3 and tax_year = 2026) = 1650000, 'G14 봇 (10,000,000 − 2,500,000) × 22% = 1,650,000원');
+  -- 확정 뒤 늦게 생긴 지난해 손익(L13c): 납부 전이면 다시 계산 → 시험 뒤 되돌림
+  insert into sp.cgt_realized (sell_fill_id, participant_id, tax_year, proceeds_krw, cost_krw, gain_krw, fx_settle)
+  values ((select id from sp.fills order by id offset 3 limit 1), 2, 2026, 0, 0, 100000, 1);
+  perform sp._cgt_refresh(2::smallint, 2026);
+  perform t.m4((select tax_krw || '/' || status from sp.tax_assessments where participant_id = 2 and tax_year = 2026) = '242000/assessed',
+               'L13c 확정 뒤 납부 전 늦은 손익 +100,000 → 1,100,000 × 22% = 242,000원으로 다시 계산');
+  delete from sp.cgt_realized where sell_fill_id = (select id from sp.fills order by id offset 3 limit 1);
+  perform sp._cgt_refresh(2::smallint, 2026);
   perform t.m4((select count(*) from sp.cash_ledger where kind = 'cgt_payment') = 0, 'G15 확정만으로는 돈이 빠지지 않음');
   -- 본인 납부: 5월 전 거부 → 5월 중 납부
   begin
@@ -166,6 +176,13 @@ do $$ declare b0 numeric; v text; begin
     v := 'ok';
   exception when others then v := sqlerrm; end;
   perform t.m4(v = 'nothing_to_pay', 'G18 두 번 납부 거부', v);
+  -- 이미 낸 해에 늦은 손익: 세액은 그대로, late_gain 표시(L13c)
+  insert into sp.cgt_realized (sell_fill_id, participant_id, tax_year, proceeds_krw, cost_krw, gain_krw, fx_settle)
+  values ((select id from sp.fills order by id offset 3 limit 1), 2, 2026, 0, 0, 100000, 1);
+  perform sp._cgt_refresh(2::smallint, 2026);
+  perform t.m4((select tax_krw || '/' || status || '/' || late_gain from sp.tax_assessments where participant_id = 2 and tax_year = 2026) = '220000/paid/true',
+               'L13c 납부 뒤 늦은 손익 → 세액 그대로 220,000, late_gain 표시');
+  perform t.m4((sp.daily_close('2027-05-11 07:10:00+00')->>'late_gain_paid_years')::int = 1, 'L13c daily_close 결과에 늦은 손익 표시 수');
   -- 자동 납부: 5/30 은 아직, 5/31(한국) 자동 차감 → 봇 원화 마이너스 허용
   perform sp.tax_annual('2027-05-31 14:00:00+00');   -- 5-31 23:00 한국
   perform t.m4((select status from sp.tax_assessments where participant_id = 3 and tax_year = 2026) = 'assessed', 'G19 5월 31일 23:30(한국) 전에는 자동 차감 안 함');
@@ -207,6 +224,9 @@ select t.m4(not exists (select 1 from sp.dividend_payouts p where p.status = 'pa
 select t.m4(not exists (select 1 from sp.fx_conversions x
                          where (select count(*) from sp.cash_ledger c where c.ref_table = 'fx_conversions' and c.ref_id = x.id) <> 2),
             'Z3 환전마다 원장 2줄');
+select t.m4(not exists (select 1 from sp.fx_conversions where scale(usd_amount) <> 2), 'R15 환전 usd_amount 소수 2자리 고정');
+select t.m4(pg_get_functiondef('sp._dividends(timestamptz)'::regprocedure) like '%order by x.participant_id, d.currency, x.id for update of x%',
+            'R14 배당 지급은 (참가자, 통화) 순으로 잠금');
 
 \o
 \pset footer off
