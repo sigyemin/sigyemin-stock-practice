@@ -5,9 +5,12 @@ import { checkMember, signOut } from './auth.js';
 import { loginScreen } from './screens/login.js';
 import { homeScreen } from './screens/home.js';
 import { fundsScreen } from './screens/funds.js';
+import { searchScreen } from './screens/search.js';
+import { chartScreen } from './screens/chart.js';
 
 const root = document.getElementById('app');
 let me = null;
+let cleanup = null; // 차트처럼 정리가 필요한 화면
 let pendingNotice = null; // 강제 로그아웃 뒤 SIGNED_OUT 으로 다시 그려져도 안내가 남게
 
 function nav() {
@@ -15,20 +18,27 @@ function nav() {
     el('a', { text, attrs: { href: hash, 'aria-current': location.hash === hash ? 'page' : 'false' } });
   return el('nav', {}, [
     link('#/home', '홈'),
+    link('#/search', '종목'),
     link('#/funds', '추가 자금'),
     el('button', { text: '로그아웃', attrs: { type: 'button' }, on: { click: () => signOut() } }),
   ]);
 }
 
+function show(...nodes) {
+  cleanup?.();
+  cleanup = nodes.find((n) => n && n._cleanup)?._cleanup ?? null;
+  mount(root, ...nodes);
+}
+
 async function render() {
-  if (!isConfigured()) return mount(root, loginScreen('unconfigured'));
+  if (!isConfigured()) return show(loginScreen('unconfigured'));
   const r = await checkMember();
   if (r.status !== 'ok') {
     me = null;
     if (r.status !== 'none') pendingNotice = r.status;
     const notice = pendingNotice;
     if (r.status === 'none') pendingNotice = null;
-    return mount(root, loginScreen(notice));
+    return show(loginScreen(notice));
   }
   pendingNotice = null;
   me = r.me;
@@ -36,10 +46,15 @@ async function render() {
   try {
     data = await loadOverview();
   } catch {
-    return mount(root, nav(), el('p', { className: 'notice', text: '잔고를 불러오지 못했습니다.' }));
+    return show(nav(), el('p', { className: 'notice', text: '잔고를 불러오지 못했습니다.' }));
   }
-  const screen = location.hash === '#/funds' ? fundsScreen(data, me, () => {}) : homeScreen(data, me);
-  mount(root, nav(), screen);
+  const chartRoute = /^#\/chart\/(KR|US)\/([0-9A-Z.]{1,10})$/.exec(decodeURIComponent(location.hash));
+  let screen;
+  if (location.hash === '#/funds') screen = fundsScreen(data, me, () => {});
+  else if (location.hash === '#/search') screen = searchScreen(me);
+  else if (chartRoute) screen = chartScreen(me, chartRoute[1], chartRoute[2]);
+  else screen = homeScreen(data, me);
+  show(nav(), screen);
 }
 
 window.addEventListener('hashchange', render);
