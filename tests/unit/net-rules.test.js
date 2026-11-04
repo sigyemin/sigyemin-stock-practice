@@ -98,3 +98,47 @@ test('허용: 지금 코드 모양(상대 import, supabase-js 고정 버전, 어
   assert.ok(netViolations(F, 'const t = deps.transport; t(u);').length > 0, 'transport 별칭');
   assert.ok(netViolations(F, 'const f = guardedFetch(KIS_ALLOW, (u) => deps.transport(u));').length > 0, 'guardedFetch 인자를 감싸기');
 });
+
+// ───────── SP-025: 리뷰(SP-024) 남은 우회 + 정규식 리터럴 + 상대 경로 밖 import ─────────
+test('SP-024 우회 원문과 L9 간단 금지', () => {
+  const cases = {
+    'TS 형변환 + 문자열 이어붙이기(원문)': "(globalThis as any)['fe' + 'tch'](u);",
+    'Deno 별칭(원문)': 'const D = Deno;',
+    'Deno 별칭 사용': "const D = Deno; D['con' + 'nect']({ hostname: 'x', port: 1 });",
+    'globalThis 구조 분해': 'const { [k]: f } = globalThis;',
+    'getOwnPropertyDescriptor': "Object.getOwnPropertyDescriptor(globalThis, k).value(u);",
+    '간접 eval': "(0, eval)('1');",
+    'eval 대입': 'const e = eval;',
+    'fromCharCode 로 이름 만들기': 'const k = String.fromCharCode(102, 101);',
+    'WebSocketStream': 'new WebSocketStream(u);',
+    'Deno.openKv': 'await Deno.openKv();',
+    'Deno.env 말고 다른 Deno API': "Deno.readTextFile('/etc/hosts');",
+  };
+  for (const [name, line] of Object.entries(cases)) assert.ok(netViolations(F, line).length > 0, name);
+  assert.deepEqual(netViolations(F, "const k = Deno.env.get('KIS_APP_KEY') ?? '';"), []);
+  assert.deepEqual(netViolations(F, 'Deno.serve(handler);'), []);
+});
+
+test('정규식 리터럴 안의 // · /* 뒤에 숨긴 코드도 검사(L10)', async () => {
+  const { stripComments } = await import('../../scripts/net-rules.mjs');
+  assert.ok(netViolations(F, 'const r = /\\//; await fetch(u);').length > 0, '/\\// 뒤');
+  assert.ok(netViolations(F, 'const r = /a\\/*/; await fetch(u);').length > 0, '/a\\/*/ 뒤');
+  assert.ok(netViolations(F, "const r = /[/]/g; await fetch(u);").length > 0, '문자 클래스 안 /');
+  assert.ok(netViolations(F, "const r = /'/; await fetch(u);").length > 0, '정규식 안 따옴표');
+  assert.ok(netViolations(F, 'if (x) return /\\//.test(s) && fetch(u);').length > 0, 'return 뒤 정규식');
+  // 나눗셈은 정규식이 아니다: a / b // 주석 → 주석은 지워진다
+  assert.equal(stripComments('const x = a / b; // fetch'), 'const x = a / b;         ');
+  assert.equal(stripComments('const y = (a) / 2 / c; /* fetch */'), 'const y = (a) / 2 / c;            ');
+  assert.deepEqual(netViolations(F, "const ok = /\\/v2\\/assets\\/[A-Z]/; // fetch 아님"), []);
+});
+
+test('상대 경로 import 가 supabase/functions 밖을 가리키면 위반(S2)', () => {
+  const f = 'supabase/functions/_shared/providers/kis.ts';
+  assert.deepEqual(netViolations(f, "import { x } from '../http.ts';"), []);
+  assert.deepEqual(netViolations(f, "import { x } from '../../fund-grant/handler.ts';"), []);
+  assert.ok(netViolations(f, "import { x } from '../../../../scripts/net-rules.mjs';").length > 0, 'scripts/');
+  assert.ok(netViolations(f, "import { x } from '../../../../app/js/api.js';").length > 0, 'app/');
+  assert.ok(netViolations(f, "import { x } from '../../../functions-evil/x.ts';").length > 0, '비슷한 이름 폴더');
+  assert.ok(netViolations('supabase/functions/x/index.ts', "import { x } from '../../migrations/a.sql';").length > 0, 'supabase/ 다른 폴더');
+  assert.ok(netViolations(f, "import { x } from '../http.ts?x=1';").length > 0, '쿼리 붙이기');
+});
