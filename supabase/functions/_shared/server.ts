@@ -8,10 +8,11 @@ import { createAlpaca } from './providers/alpaca.ts';
 import { createExim } from './providers/koreaexim.ts';
 
 const env = (k: string) => Deno.env.get(k) ?? '';
+const SUPABASE_URL = env('SUPABASE_URL');
 
 export function serviceDb() {
   const key = JSON.parse(env('SUPABASE_SECRET_KEYS') || '{}')['default'] ?? '';
-  return createClient(env('SUPABASE_URL'), key, {
+  return createClient(SUPABASE_URL, key, {
     db: { schema: 'sp' },
     auth: { persistSession: false, autoRefreshToken: false },
   });
