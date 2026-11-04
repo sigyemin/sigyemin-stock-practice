@@ -19,6 +19,11 @@ create function t.act(who text) returns void language plpgsql as $$
 declare v_sub text;
 begin
   perform set_config('role', 'none', true);
+  if who = '서버' then
+    perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+    perform set_config('role', 'service_role', true);
+    return;
+  end if;
   if who = 'anon' then
     perform set_config('request.jwt.claims', '{"role":"anon"}', true);
     perform set_config('role', 'anon', true);
@@ -104,7 +109,8 @@ select t.check(not exists (select 1 from sp.rate_table r
 select t.check(t.try('anon', format('select count(*) from sp.%I', tbl)) = '42501',
                format('B1 anon select sp.%s 거부', tbl), t.try('anon', format('select count(*) from sp.%I', tbl)))
 from unnest(array['participants','allowed_users','app_settings','rate_table','rate_bands',
-                  'accounts','cash_ledger','fund_grants']) as tbl;
+                  'accounts','cash_ledger','fund_grants',
+                  'instruments','market_calendar','quotes','candles','fx_rates','watchlist','drawings','server_kv']) as tbl;
 select t.check(t.try('anon', 'select sp.request_fund(1::smallint, ''KRW'', 1)') = '42501', 'B2 anon request_fund 실행 거부');
 select t.check(t.try('anon', 'select sp.me()') = '42501', 'B3 anon sp.me() 실행 거부');
 
@@ -230,6 +236,110 @@ do $$ declare v text; begin
 end $$;
 select t.check((select count(*) from sp.cash_ledger) > 0, 'G6 truncate 시도 뒤 원장 그대로');
 
+-- ═════════ I. M2 시세·차트 (0004) ═════════
+-- 합성 종목·시세(실제 종목 아님)
+insert into sp.instruments (market, symbol, name, exchange, currency) values
+  ('KR', '999990', '시험종목가', 'KOSPI', 'KRW'),
+  ('KR', '999991', '시험종목나', 'KOSDAQ', 'KRW'),
+  ('US', 'TSTA', 'Test Alpha', 'NASDAQ', 'USD');
+insert into sp.quotes (market, symbol, price, mode, quote_at, source) values ('KR', '999990', 70000, 'realtime', now(), 'test');
+insert into sp.candles (market, symbol, tf, t, o, h, l, c, v, source) values
+  ('KR', '999990', '1m', '2026-11-04 00:01:00+00', 70000, 70100, 69900, 70050, 10, 'test');
+insert into sp.fx_rates (rate_date, usdkrw, source) values ('2026-11-03', 1400, 'test');
+
+select t.check(t.count_as(who, format('select count(*) from sp.%I', tbl)) = 1,
+               format('I1 %s 가 sp.%s 읽기(1행)', who, tbl))
+from (values ('민'), ('뽀')) as w(who)
+cross join unnest(array['quotes','candles','fx_rates']) as tbl;
+select t.check(t.count_as('민', 'select count(*) from sp.instruments') = 3, 'I2 민 instruments 3행');
+select t.check(t.count_as('미등록', format('select count(*) from sp.%I', tbl)) = 0, format('I3 미등록 sp.%s 0행', tbl))
+from unnest(array['instruments','quotes','candles','fx_rates','market_calendar','drawings']) as tbl;
+
+-- 관심 종목: 본인 것만 쓰고 본인 것만 보임
+select t.check(t.try('민', 'insert into sp.watchlist (participant_id, market, symbol) values (1, ''KR'', ''999990'')') = 'ok', 'I4 민 관심 종목 추가(본인)');
+select t.check(t.try('뽀', 'insert into sp.watchlist (participant_id, market, symbol) values (2, ''US'', ''TSTA'')') = 'ok', 'I5 뽀 관심 종목 추가(본인)');
+select t.check(t.try('민', 'insert into sp.watchlist (participant_id, market, symbol) values (2, ''KR'', ''999991'')') = '42501', 'I6 민이 뽀 관심 종목 추가 거부');
+select t.check(t.count_as('뽀', 'select count(*) from sp.watchlist') = 1, 'I7 뽀는 본인 관심 종목만 보임');
+select t.check(t.try('뽀', 'delete from sp.watchlist where participant_id = 1') = 'ok', 'I8a 뽀의 민 관심 종목 delete 문 실행(오류 없이 0행)');
+select t.check((select count(*) from sp.watchlist where participant_id = 1) = 1, 'I8 뽀가 민 관심 종목 삭제 못 함');
+
+-- 그림
+select t.check(t.try('민', 'insert into sp.drawings (participant_id, market, symbol, tf, tool, points) values (1, ''KR'', ''999990'', ''1d'', ''trendline'', ''[{"t":"2026-11-02T00:00:00Z","p":70000},{"t":"2026-11-03T00:00:00Z","p":71000}]'')') = 'ok',
+               'I9 민 그림 저장(본인)');
+select t.check(t.try('민', 'insert into sp.drawings (participant_id, market, symbol, tf, tool, points) values (2, ''KR'', ''999990'', ''1d'', ''hline'', ''[{"p":1}]'')') = '42501',
+               'I10 민이 뽀 이름으로 그림 저장 거부');
+select t.check(t.count_as('뽀', 'select count(*) from sp.drawings') = 1, 'I11 뽀도 민 그림을 볼 수 있음');
+select t.check(t.try('뽀', 'update sp.drawings set label = ''x'' where participant_id = 1') = 'ok', 'I12a 뽀의 민 그림 update 문 실행(오류 없이 0행)');
+select t.check((select label from sp.drawings where participant_id = 1) is null, 'I12 뽀가 민 그림 수정 못 함');
+select t.check(t.try('뽀', 'delete from sp.drawings where participant_id = 1') = 'ok', 'I13a 뽀의 민 그림 delete 문 실행(오류 없이 0행)');
+select t.check((select count(*) from sp.drawings) = 1, 'I13 뽀가 민 그림 삭제 못 함');
+do $$ declare before timestamptz; v text; begin
+  select updated_at into before from sp.drawings where participant_id = 1;
+  perform pg_sleep(0.01);
+  v := t.try('민', 'update sp.drawings set label = ''추세선'' where participant_id = 1');
+  perform t.check(v = 'ok' and (select updated_at from sp.drawings where participant_id = 1) > before
+                  and (select label from sp.drawings where participant_id = 1) = '추세선',
+                  'I14 민 본인 그림 수정 + updated_at 트리거 동작(실행 권한 없이)', v);
+end $$;
+select t.check(t.try('민', 'update sp.drawings set participant_id = 2 where participant_id = 1') = '42501', 'I15 그림 주인 바꾸기 거부(열 권한)');
+select t.check(t.try('민', 'insert into sp.drawings (participant_id, market, symbol, tf, tool, points) values (1, ''KR'', ''999990'', ''1d'', ''ray'', (select jsonb_agg(jsonb_build_object(''p'', g)) from generate_series(1, 11) g))') = '23514',
+               'I16 그림 점 11개 거부(check)');
+select t.check(t.try('민', 'delete from sp.drawings where participant_id = 1') = 'ok', 'I17a 민 본인 그림 delete');
+select t.check((select count(*) from sp.drawings) = 0, 'I17 민 본인 그림 삭제됨');
+
+-- 시세 테이블 브라우저 쓰기 거부
+select t.check(t.try('민', q) = '42501', format('I18 민 %s 거부', label), t.try('민', q))
+from (values
+  ('quotes update', 'update sp.quotes set price = 1'),
+  ('candles insert', 'insert into sp.candles (market, symbol, tf, t, o, h, l, c, source) values (''KR'',''999990'',''1d'',now(),1,1,1,1,''x'')'),
+  ('instruments insert', 'insert into sp.instruments (market, symbol, name, exchange, currency) values (''KR'',''999992'',''x'',''KOSPI'',''KRW'')'),
+  ('fx_rates insert', 'insert into sp.fx_rates (rate_date, usdkrw, source) values (''2026-11-04'', 1, ''x'')'),
+  ('market_calendar update', 'update sp.market_calendar set is_open = true'),
+  ('server_kv select', 'select count(*) from sp.server_kv')
+) as x(label, q);
+
+-- 서버(service_role): 시세 쓰기·server_kv 만, 돈 테이블·함수는 없음
+select t.check(t.try('서버', q) = 'ok', format('I19 서버 %s 허용', label), t.try('서버', q))
+from (values
+  ('quotes upsert', 'insert into sp.quotes (market, symbol, price, mode, quote_at, source) values (''US'',''TSTA'',200,''realtime'',now(),''test'') on conflict (market, symbol) do update set price = excluded.price'),
+  ('candles insert', 'insert into sp.candles (market, symbol, tf, t, o, h, l, c, source) values (''US'',''TSTA'',''1m'',now(),1,2,1,2,''test'')'),
+  ('instruments insert', 'insert into sp.instruments (market, symbol, name, exchange, currency) values (''KR'',''999993'',''시험종목다'',''KOSPI'',''KRW'')'),
+  ('fx_rates insert', 'insert into sp.fx_rates (rate_date, usdkrw, source) values (''2026-11-04'', 1401.5, ''test'')'),
+  ('server_kv upsert', 'insert into sp.server_kv (key, value) values (''kis_token'', ''x'') on conflict (key) do update set value = excluded.value'),
+  ('watchlist select', 'select count(*) from sp.watchlist'),
+  ('app_settings select', 'select count(*) from sp.app_settings')
+) as x(label, q);
+select t.check(t.try('서버', q) = '42501', format('I20 서버 %s 거부', label), t.try('서버', q))
+from (values
+  ('accounts select', 'select count(*) from sp.accounts'),
+  ('cash_ledger insert', 'insert into sp.cash_ledger (account_id, kind, amount) values (1, ''adjust'', 1)'),
+  ('fund_grants select', 'select count(*) from sp.fund_grants'),
+  ('allowed_users select', 'select count(*) from sp.allowed_users'),
+  ('sp.grant 실행', 'select sp.grant(1::smallint, ''KRW'', 1, ''add_fund'', 1::smallint)'),
+  ('sp.request_fund 실행', 'select sp.request_fund(1::smallint, ''KRW'', 1)'),
+  ('watchlist insert', 'insert into sp.watchlist (participant_id, market, symbol) values (3, ''KR'', ''999990'')'),
+  ('drawings insert', 'insert into sp.drawings (participant_id, market, symbol, tf, tool, points) values (3, ''KR'', ''999990'', ''1d'', ''hline'', ''[{"p":1}]'')')
+) as x(label, q);
+
+-- 제약
+select t.check(t.try('서버', 'insert into sp.candles (market, symbol, tf, t, o, h, l, c, source) values (''US'',''TSTA'',''1d'',now(),5,4,6,5,''x'')') = '23514', 'I21 고가<저가 봉 거부(check)');
+select t.check(t.try('서버', 'insert into sp.instruments (market, symbol, name, exchange, currency) values (''KR'',''ABC'',''x'',''KOSPI'',''KRW'')') = '23514', 'I22 KR 종목코드 형식 거부');
+select t.check(t.try('서버', 'insert into sp.quotes (market, symbol, price, mode, quote_at, source) values (''KR'',''000000'',1,''realtime'',now(),''x'')') = '23503', 'I23 없는 종목 시세 거부(FK)');
+
+-- 달력·설정
+select t.check((select count(*) from sp.market_calendar where market = 'US' and not is_open) = 20, 'I24 NYSE 휴장일 2026·2027 20일');
+select t.check((select close_at from sp.market_calendar where market = 'US' and trade_date = '2026-11-27') = '2026-11-27 18:00:00+00',
+               'I25 2026-11-27 조기폐장 13:00 ET = 18:00 UTC');
+select t.check((select close_at from sp.market_calendar where market = 'US' and trade_date = '2026-12-24') = '2026-12-24 18:00:00+00',
+               'I26 2026-12-24 조기폐장 13:00 ET');
+select t.check((select value from sp.app_settings where key = 'kr_quote_mode') = 'delayed', 'I27 0004 뒤에도 kr_quote_mode 값 그대로');
+select t.check((select count(*) from sp.app_settings where key in ('tick_max_symbols_kr','tick_max_symbols_us','tick_time_budget_ms','kis_call_gap_ms','backfill_days_1d')) = 5,
+               'I28 M2 설정값 5개');
+select t.check(not exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                            where n.nspname = 'public' and c.relkind in ('r','v','m','S','f','p'))
+               and not exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace),
+               'I29 public 스키마에 만든 것 없음');
+
 -- ═════════ H. 함수 실행 권한 ═════════
 -- 앞으로 만들 함수: 기본 권한으로 PUBLIC EXECUTE 가 붙지 않아야 한다(리뷰 M1 재현)
 create function sp.future_fn() returns int language sql security definer set search_path = '' as $$ select 1 $$;
@@ -247,14 +357,15 @@ select t.check(
   not exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE')
     and p.proacl is not null
     and not has_function_privilege('anon', p.oid, 'EXECUTE')
+    and not has_function_privilege('service_role', p.oid, 'EXECUTE')
     and has_function_privilege('authenticated', p.oid, 'EXECUTE') = (p.proname in ('me', 'request_fund')),
-  format('H4 sp.%s(%s) 실행 권한: PUBLIC·anon 없음, authenticated %s', p.proname, pg_get_function_identity_arguments(p.oid),
+  format('H4 sp.%s(%s) 실행 권한: PUBLIC·anon·service_role 없음, authenticated %s', p.proname, pg_get_function_identity_arguments(p.oid),
          case when p.proname in ('me', 'request_fund') then '허용' else '없음' end),
   coalesce(p.proacl::text, 'proacl null(기본 권한 = PUBLIC)'))
 from pg_proc p
 where p.pronamespace = 'sp'::regnamespace
 order by p.proname;
-select t.check((select count(*) from pg_proc where pronamespace = 'sp'::regnamespace) >= 5, 'H5 sp 함수 검사 대상 5개 이상',
+select t.check((select count(*) from pg_proc where pronamespace = 'sp'::regnamespace) >= 7, 'H5 sp 함수 검사 대상 7개 이상',
                (select count(*)::text from pg_proc where pronamespace = 'sp'::regnamespace));
 
 -- ═════════ 결과 ═════════

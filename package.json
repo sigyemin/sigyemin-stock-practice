@@ -7,6 +7,7 @@
   "scripts": {
     "test": "node --experimental-strip-types --test tests/unit/*.test.js",
     "check:security": "node scripts/check-security.mjs",
-    "test:sql": "bash tests/sql/run.sh"
+    "test:sql": "bash tests/sql/run.sh",
+    "check:deno": "cd supabase/functions && npx --yes deno@2.9.6 check --no-lock --node-modules-dir=none --no-config */index.ts"
   }
 }

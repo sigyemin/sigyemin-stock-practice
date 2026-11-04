@@ -32,3 +32,13 @@ for f in "$ROOT"/supabase/migrations/*.sql; do
 done
 echo "== tests"
 run "$ROOT/tests/sql/rls.test.sql"
+
+# 운영 설정 SQL(supabase/ops/cron-m2.sql): 확장 대신 stub 을 깔고, 확장 생성 줄만 빼서 두 번 적용(다시 실행해도 되는지)
+echo "== ops"
+run "$ROOT/tests/sql/10_ops_stub.sql"
+OPS_TMP="$(mktemp)"
+grep -v '^create extension' "$ROOT/supabase/ops/cron-m2.sql" > "$OPS_TMP"
+run "$OPS_TMP"
+run "$OPS_TMP"
+rm -f "$OPS_TMP"
+run "$ROOT/tests/sql/ops.test.sql"
