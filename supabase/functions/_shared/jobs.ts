@@ -2,7 +2,7 @@
 import { isKrxOpen, isNyseOpen, KR_TZ, US_TZ, localDate, localHhmmss, type CalendarRow } from './market-time.ts';
 import { krPlan, parseKrMode } from './providers/index.ts';
 import type { createKis, Bar } from './providers/kis.ts';
-import { kstToIso } from './providers/kis.ts';
+import { kstToIso, type DividendRow } from './providers/kis.ts';
 import type { createAlpaca } from './providers/alpaca.ts';
 import type { createExim } from './providers/koreaexim.ts';
 
@@ -39,9 +39,14 @@ export type JobDb = {
   // 주문 처리(M3): DB 함수 sp.process_orders / sp.expire_orders
   processOrders: (market: 'KR' | 'US') => Promise<number>;
   expireOrders: (market: 'KR' | 'US') => Promise<number>;
+  // M4: 배당 일정 대상(보유 + 관심 종목), 일정 저장(sp.upsert_dividend_events), 마감·연간 정산
+  dividendSymbols: (market: 'KR' | 'US', limit: number) => Promise<string[]>;
+  upsertDividendEvents: (rows: DividendRow[]) => Promise<number>;
+  dailyClose: () => Promise<Record<string, number>>;
+  taxAnnual: () => Promise<Record<string, number>>;
 };
 
-export type JobResult = { status: 'ok' | 'skipped' | 'error'; reason?: string; count?: number; errors?: string[]; filled?: number; expired?: number };
+export type JobResult = { status: 'ok' | 'skipped' | 'error'; reason?: string; count?: number; errors?: string[]; filled?: number; expired?: number; [k: string]: unknown };
 
 const int = (v: string | undefined, d: number) => {
   const n = Number(v);
@@ -184,12 +189,81 @@ export async function runFxSync(d: { db: JobDb; exim: Exim | null; now: () => Da
   return { status: 'ok', count: 1 };
 }
 
-// ───────── ref-sync: 한국 휴장일(KIS chk-holiday, 하루 1회 이하) ─────────
-export async function runRefSync(d: { db: JobDb; kis: Kis | null; now: () => Date }): Promise<JobResult> {
-  if (!d.kis) return { status: 'error', reason: 'kis_not_configured' };
-  const rows = await d.kis.holidays(localDate(KR_TZ, d.now()).replace(/-/g, ''));
-  await d.db.saveCalendar(rows.map((r) => ({ market: 'KR', ...r, source_url: 'kis:chk-holiday' })));
-  return { status: 'ok', count: rows.length };
+// ───────── ref-sync(하루 1회): 한국 휴장일(KIS chk-holiday) + 배당 일정(M4: KIS ksdinfo/dividend, Alpaca corporate-actions) ─────────
+// 배당은 보유·관심 종목만, 기준일(미국은 공급자 기준 날짜) 오늘 −40일 ~ +120일. 한 부분이 실패해도 나머지는 한다.
+export const DIV_LOOKBACK_DAYS = 40;
+export const DIV_LOOKAHEAD_DAYS = 120;
+
+const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+
+export async function runRefSync(d: {
+  db: JobDb;
+  kis: Kis | null;
+  alpaca?: Alpaca | null;
+  now: () => Date;
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<JobResult> {
+  const errors: string[] = [];
+  let ok = 0;
+  let count = 0;
+  const today = localDate(KR_TZ, d.now());
+  const from = addDays(today, -DIV_LOOKBACK_DAYS);
+  const to = addDays(today, DIV_LOOKAHEAD_DAYS);
+  const sleep = d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const s = await d.db.settings();
+
+  if (!d.kis) {
+    errors.push('kis_not_configured');
+  } else {
+    try {
+      const rows = await d.kis.holidays(today.replace(/-/g, ''));
+      await d.db.saveCalendar(rows.map((r) => ({ market: 'KR', ...r, source_url: 'kis:chk-holiday' })));
+      count += rows.length;
+      ok++;
+    } catch (e) {
+      errors.push(`holidays:${errCode(e)}`);
+    }
+    try {
+      const symbols = await d.db.dividendSymbols('KR', int(s.div_max_symbols_kr, 60));
+      const rows: DividendRow[] = [];
+      for (const sym of symbols) {
+        try {
+          rows.push(...(await d.kis.dividends(sym, from.replace(/-/g, ''), to.replace(/-/g, ''))).filter((r) => r.symbol === sym));
+        } catch (e) {
+          errors.push(`div:${sym}:${errCode(e)}`);
+        }
+        await sleep(int(s.kis_call_gap_ms, 70));
+      }
+      if (rows.length) count += await d.db.upsertDividendEvents(rows);
+      ok++;
+    } catch (e) {
+      errors.push(`div_kr:${errCode(e)}`);
+    }
+  }
+  if (d.alpaca === undefined || d.alpaca === null) {
+    errors.push('alpaca_not_configured');
+  } else {
+    try {
+      const symbols = await d.db.dividendSymbols('US', int(s.div_max_symbols_us, 100));
+      if (symbols.length) {
+        const rows = (await d.alpaca.dividends(symbols, from, to)).filter((r) => symbols.includes(r.symbol));
+        if (rows.length) count += await d.db.upsertDividendEvents(rows);
+      }
+      ok++;
+    } catch (e) {
+      errors.push(`div_us:${errCode(e)}`);
+    }
+  }
+  return ok === 0 ? { status: 'error', reason: errors[0] ?? 'nothing_done', errors } : { status: 'ok', count, errors };
+}
+
+// ───────── daily-close / tax-annual: DB 함수 하나씩(계산은 전부 DB) ─────────
+export async function runDailyClose(d: { db: JobDb }): Promise<JobResult> {
+  return { status: 'ok', ...(await d.db.dailyClose()) };
+}
+
+export async function runTaxAnnual(d: { db: JobDb }): Promise<JobResult> {
+  return { status: 'ok', ...(await d.db.taxAnnual()) };
 }
 
 // ───────── 종목 추가(instrument-lookup): 종목 정보 + 일봉 기록 받아 오기 ─────────

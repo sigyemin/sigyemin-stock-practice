@@ -4,6 +4,9 @@
 //   - 토큰 POST /oauth2/tokenP, "유효기간 1일, 6시간 이내 발급시 기존 token값 유지, 발급시 알림톡 무조건 발송" (kis_auth.py 주석)
 //   - 현재가 FHKST01010100, 당일 분봉 FHKST03010200(1회 최대 30건, 당일만), 일봉 FHKST03010100(1회 최대 100건),
 //     휴장일 CTCA0903R("가급적 1일 1회"), 주식기본조회 CTPF1002R
+//   - 예탁원정보(배당일정) HHKDB669102C0, GET /uapi/domestic-stock/v1/ksdinfo/dividend
+//     (examples_llm/domestic_stock/ksdinfo_dividend: CTS, GB1 0=배당전체, F_DT, T_DT, SHT_CD, HIGH_GB → output1 의
+//      record_date 기준일, sht_cd, per_sto_divi_amt 현금배당금, divi_pay_dt 배당금지급일). 날짜 표기 형식은 확인 못 함 → 여러 형식 허용
 // 주문·잔고·계좌 경로와 TR ID 는 이 파일에 없다. 계좌번호도 쓰지 않는다.
 import { guardedFetch, type AllowRule, type FetchLike } from '../http.ts';
 import type { KvStore } from '../kv.ts';
@@ -16,6 +19,7 @@ export const KIS_TR = {
   daily: 'FHKST03010100',
   holiday: 'CTCA0903R',
   stockInfo: 'CTPF1002R',
+  dividend: 'HHKDB669102C0',
 } as const;
 
 const Q = '/uapi/domestic-stock/v1/quotations';
@@ -26,6 +30,7 @@ export const KIS_PATHS = {
   daily: `${Q}/inquire-daily-itemchartprice`,
   holiday: `${Q}/chk-holiday`,
   stockInfo: `${Q}/search-stock-info`,
+  dividend: '/uapi/domestic-stock/v1/ksdinfo/dividend',
 } as const;
 
 export const KIS_ALLOW: AllowRule[] = [
@@ -35,6 +40,7 @@ export const KIS_ALLOW: AllowRule[] = [
   { method: 'GET', origin: KIS_ORIGIN, path: KIS_PATHS.daily, trIds: [KIS_TR.daily] },
   { method: 'GET', origin: KIS_ORIGIN, path: KIS_PATHS.holiday, trIds: [KIS_TR.holiday] },
   { method: 'GET', origin: KIS_ORIGIN, path: KIS_PATHS.stockInfo, trIds: [KIS_TR.stockInfo] },
+  { method: 'GET', origin: KIS_ORIGIN, path: KIS_PATHS.dividend, trIds: [KIS_TR.dividend] },
 ];
 
 // 토큰 재사용 규칙(우리 쪽)
@@ -170,6 +176,11 @@ export function createKis(deps: KisDeps) {
       const b = await get(KIS_PATHS.stockInfo, KIS_TR.stockInfo, { PRDT_TYPE_CD: '300', PDNO: symbol });
       return parseStockInfo(symbol, b.output as Record<string, string>);
     },
+    // 배당 일정(기준일 from~to, YYYYMMDD). 한 종목씩, 첫 쪽만(종목당 몇 건뿐)
+    async dividends(symbol: string, from: string, to: string) {
+      const b = await get(KIS_PATHS.dividend, KIS_TR.dividend, { CTS: '', GB1: '0', F_DT: from, T_DT: to, SHT_CD: symbol, HIGH_GB: '' });
+      return parseKrDividends(b.output1 as Record<string, string>[]);
+    },
   };
 }
 
@@ -265,4 +276,38 @@ export function parseStockInfo(symbol: string, o: Record<string, string>) {
   const isStock = (o.scty_grp_id_cd ?? '') === 'ST';
   if (!isStock || delisted || kospi === kosdaq) return null;
   return { market: 'KR', symbol, name, exchange: kospi ? 'KOSPI' : 'KOSDAQ', currency: 'KRW' } as const;
+}
+
+// 'YYYYMMDD' | 'YYYY/MM/DD' | 'YYYY-MM-DD' | 'YYYY.MM.DD' → 'YYYY-MM-DD' (그 밖은 null)
+export function ymd(s: unknown): string | null {
+  const m = /^(\d{4})[-/.]?(\d{2})[-/.]?(\d{2})$/.exec(String(s ?? '').trim());
+  if (!m) return null;
+  const d = `${m[1]}-${m[2]}-${m[3]}`;
+  const t = new Date(`${d}T00:00:00Z`);
+  return Number.isNaN(t.getTime()) || t.toISOString().slice(0, 10) !== d ? null : d;
+}
+
+export type DividendRow = {
+  market: 'KR' | 'US';
+  symbol: string;
+  ex_date: string | null;
+  record_date: string;
+  pay_date: string;
+  cash_per_share: number;
+  source: string;
+};
+
+// 현금배당만. 지급일이 아직 안 정해진 행·금액 0 은 건너뛴다(다음 동기화 때 다시 받음). 락일은 이 응답에 없어 비움(DB 가 기준일 직전 거래일로)
+export function parseKrDividends(rows: Record<string, string>[]): DividendRow[] {
+  const out: DividendRow[] = [];
+  for (const r of rows ?? []) {
+    if (!r) continue;
+    const symbol = String(r.sht_cd ?? '').trim();
+    const record = ymd(r.record_date);
+    const pay = ymd(r.divi_pay_dt);
+    const cps = num(r.per_sto_divi_amt);
+    if (!/^\d{6}$/.test(symbol) || !record || !pay || cps === null || cps <= 0 || pay < record) continue;
+    out.push({ market: 'KR', symbol, ex_date: null, record_date: record, pay_date: pay, cash_per_share: cps, source: 'kis:ksdinfo-dividend' });
+  }
+  return out;
 }

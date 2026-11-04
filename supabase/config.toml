@@ -28,3 +28,16 @@ verify_jwt = false
 
 [functions.cancel-order]
 verify_jwt = false
+
+# M4: fx-convert·tax-pay = 사용자 JWT, daily-close·tax-annual = cron 토큰(x-cron-token)
+[functions.fx-convert]
+verify_jwt = false
+
+[functions.tax-pay]
+verify_jwt = false
+
+[functions.daily-close]
+verify_jwt = false
+
+[functions.tax-annual]
+verify_jwt = false

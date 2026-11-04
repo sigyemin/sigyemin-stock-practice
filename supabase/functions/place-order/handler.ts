@@ -28,6 +28,8 @@ export const KNOWN_ERRORS = new Set([
   'invalid_side', 'invalid_type', 'invalid_qty', 'invalid_limit', 'unknown_instrument', 'tick_unknown', 'tick_mismatch',
   'price_limit', 'krw_negative', 'quote_stale', 'no_quote', 'insufficient_funds', 'insufficient_qty', 'kr_delayed_orders_unavailable',
   'not_registered', 'forbidden', 'not_found', 'not_cancellable',
+  // M4 환전·납부
+  'invalid_direction', 'invalid_amount', 'amount_too_small', 'fx_stale', 'nothing_to_pay', 'not_payment_period', 'invalid_year',
 ]);
 
 function cors(req: Request, origins: string[]): Record<string, string> {
@@ -62,7 +64,9 @@ export function parseOrder(b: Record<string, unknown>): OrderInput | string {
   return { market, symbol, side: b.side, type: b.type, qty, limit, dry_run: b.dry_run === true };
 }
 
-function makeHandler(deps: OrderDeps, run: (jwt: string, body: Record<string, unknown>) => Promise<{ status: number; body: unknown }>) {
+export type UserDeps = Pick<OrderDeps, 'allowedOrigins' | 'getCaller'>;
+
+export function makeHandler(deps: UserDeps, run: (jwt: string, body: Record<string, unknown>) => Promise<{ status: number; body: unknown }>) {
   return async (req: Request): Promise<Response> => {
     const h = cors(req, deps.allowedOrigins);
     const json = (status: number, body: unknown) =>
@@ -87,7 +91,7 @@ function makeHandler(deps: OrderDeps, run: (jwt: string, body: Record<string, un
   };
 }
 
-function fromRpc(r: RpcResult): { status: number; body: unknown } {
+export function fromRpc(r: RpcResult): { status: number; body: unknown } {
   if ('data' in r) return { status: 200, body: r.data };
   const code = KNOWN_ERRORS.has(r.message) ? r.message : 'server_error';
   if (r.errorCode === '42501') return { status: 403, body: { ok: false, error: code === 'server_error' ? 'forbidden' : code } };

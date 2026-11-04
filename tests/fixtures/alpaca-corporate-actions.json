@@ -1,0 +1,11 @@
+{
+  "_note": "합성 응답(필드 이름만 Alpaca 공식 문서 Corporate actions 기준, 값·종목은 가짜)",
+  "corporate_actions": {
+    "cash_dividends": [
+      { "id": "00000000-0000-4000-8000-000000000001", "symbol": "TSTA", "cusip": "000000000", "rate": 0.26, "special": false, "foreign": false, "process_date": "2026-11-20", "ex_date": "2026-11-12", "record_date": "2026-11-13", "payable_date": "2026-11-20" },
+      { "id": "00000000-0000-4000-8000-000000000002", "symbol": "TSTA", "rate": 0.1, "ex_date": "2026-12-10", "record_date": "2026-12-11", "currency": "CAD", "payable_date": "2026-12-20" },
+      { "id": "00000000-0000-4000-8000-000000000003", "symbol": "TSTA", "rate": 0.3, "ex_date": "2027-02-10", "record_date": "2027-02-11" }
+    ]
+  },
+  "next_page_token": null
+}

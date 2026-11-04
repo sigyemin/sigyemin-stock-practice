@@ -110,7 +110,9 @@ select t.check(t.try('anon', format('select count(*) from sp.%I', tbl)) = '42501
                format('B1 anon select sp.%s 거부', tbl), t.try('anon', format('select count(*) from sp.%I', tbl)))
 from unnest(array['participants','allowed_users','app_settings','rate_table','rate_bands',
                   'accounts','cash_ledger','fund_grants',
-                  'instruments','market_calendar','quotes','candles','fx_rates','watchlist','drawings','server_kv']) as tbl;
+                  'instruments','market_calendar','quotes','candles','fx_rates','watchlist','drawings','server_kv',
+                  'orders','fills','tax_lots','lot_sales','fx_conversions','dividend_events','dividend_payouts',
+                  'cgt_realized','tax_assessments']) as tbl;
 select t.check(t.try('anon', 'select sp.request_fund(1::smallint, ''KRW'', 1)') = '42501', 'B2 anon request_fund 실행 거부');
 select t.check(t.try('anon', 'select sp.me()') = '42501', 'B3 anon sp.me() 실행 거부');
 
@@ -381,11 +383,11 @@ select t.check(
   not exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE')
     and p.proacl is not null
     and not has_function_privilege('anon', p.oid, 'EXECUTE')
-    and has_function_privilege('service_role', p.oid, 'EXECUTE') = (p.proname in ('kv_claim', 'process_orders', 'expire_orders', 'place_order_bot'))
-    and has_function_privilege('authenticated', p.oid, 'EXECUTE') = (p.proname in ('me', 'request_fund', 'place_order', 'cancel_order')),
+    and has_function_privilege('service_role', p.oid, 'EXECUTE') = (p.proname in ('kv_claim', 'process_orders', 'expire_orders', 'place_order_bot', 'fx_convert_bot', 'upsert_dividend_events', 'daily_close', 'tax_annual'))
+    and has_function_privilege('authenticated', p.oid, 'EXECUTE') = (p.proname in ('me', 'request_fund', 'place_order', 'cancel_order', 'fx_convert', 'cgt_pay')),
   format('H4 sp.%s(%s) 실행 권한: PUBLIC·anon 없음, authenticated %s, service_role %s', p.proname, pg_get_function_identity_arguments(p.oid),
-         case when p.proname in ('me', 'request_fund', 'place_order', 'cancel_order') then '허용' else '없음' end,
-         case when p.proname in ('kv_claim', 'process_orders', 'expire_orders', 'place_order_bot') then '허용' else '없음' end),
+         case when p.proname in ('me', 'request_fund', 'place_order', 'cancel_order', 'fx_convert', 'cgt_pay') then '허용' else '없음' end,
+         case when p.proname in ('kv_claim', 'process_orders', 'expire_orders', 'place_order_bot', 'fx_convert_bot', 'upsert_dividend_events', 'daily_close', 'tax_annual') then '허용' else '없음' end),
   coalesce(p.proacl::text, 'proacl null(기본 권한 = PUBLIC)'))
 from pg_proc p
 where p.pronamespace = 'sp'::regnamespace
