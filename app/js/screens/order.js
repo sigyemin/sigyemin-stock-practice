@@ -41,6 +41,7 @@ export function orderScreen(me, market, symbol) {
   const invalidate = () => {
     previewed = null;
     orderBtn.disabled = true;
+    preview.replaceChildren(); // 입력이 바뀌면 예전 미리보기를 지운다
   };
   for (const n of [sideBox, typeBox, qty, limit]) n.addEventListener('input', invalidate);
   typeBox.addEventListener('change', () => {
@@ -109,7 +110,7 @@ export function orderScreen(me, market, symbol) {
   return el('section', {}, [
     el('p', {}, [el('a', { text: '← 차트', attrs: { href: `#/chart/${market}/${encodeURIComponent(symbol)}` } })]),
     title,
-    el('div', { className: 'card stack' }, [
+    el('div', { className: 'card form' }, [
       sideBox,
       typeBox,
       el('label', { text: '수량(주)', attrs: { for: 'ord-qty' } }), qty,

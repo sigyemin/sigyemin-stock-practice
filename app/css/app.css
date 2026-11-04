@@ -70,3 +70,6 @@ button.on { background: var(--accent); color: #fff; border-color: var(--accent);
 .item p { margin: 0 0 4px; }
 .button-link { display: inline-block; padding: 8px 12px; border-radius: 8px; background: var(--accent); color: #fff; text-decoration: none; }
 input[type="radio"] { width: auto; }
+.card.form { display: grid; gap: 8px; max-width: 420px; }
+.card.form .row { margin: 0; }
+.card:empty { display: none; }
