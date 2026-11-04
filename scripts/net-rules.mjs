@@ -144,14 +144,18 @@ function importViolations(relPath, code) {
   for (const m of code.matchAll(/\bimport\s*(['"`])([^'"`]*)\1/g)) specs.push([m.index, m[2]]);
   for (const [idx, s] of specs) {
     const relative = s.startsWith('./') || s.startsWith('../');
-    const ok = relative ? !s.includes('://') && !s.includes('?') && resolvesInsideFunctions(relPath, s) : ALLOWED_IMPORTS.includes(s);
+    const ok = relative
+      ? !s.includes('://') && !s.includes('?') && /\.(ts|js|mjs)$/.test(s) && resolvesInsideFunctions(relPath, s)
+      : ALLOWED_IMPORTS.includes(s);
     if (!ok) out.push(`${relPath}:${code.slice(0, idx).split('\n').length} 허용되지 않은 import '${s}'`);
   }
   return out;
 }
 
 export function netViolations(relPath, source) {
-  if (!/^supabase\/functions\/.*\.(ts|js|mjs|tsx|jsx)$/.test(relPath)) return [];
+  if (!relPath.startsWith('supabase/functions/')) return [];
+  // L11: 검사할 수 없는 확장자(.mts·.json·.wasm 등)는 두지 않는다
+  if (!/\.(ts|js|mjs|tsx|jsx)$/.test(relPath)) return [`${relPath} 검사 대상 확장자(.ts·.js·.mjs·.tsx·.jsx)가 아닌 파일`];
   const code = stripComments(source);
   const out = importViolations(relPath, code);
   code.split('\n').forEach((line, i) => {

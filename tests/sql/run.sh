@@ -32,6 +32,8 @@ for f in "$ROOT"/supabase/migrations/*.sql; do
 done
 echo "== tests"
 run "$ROOT/tests/sql/rls.test.sql"
+echo "== orders"
+run "$ROOT/tests/sql/orders.test.sql"
 
 # 운영 설정 SQL(supabase/ops/cron-m2.sql): 확장 대신 stub 을 깔고, 확장 생성 줄만 빼서 두 번 적용(다시 실행해도 되는지)
 echo "== ops"
@@ -64,3 +66,22 @@ for CASE in new old; do
   fi
 done
 echo "PASS kv_claim concurrency (2)"
+
+# 취소와 처리 동시 실행(리뷰 SP-028 M1): A 가 예약 지정가(첫 봉 시가엔 안 맞고 저가엔 맞음)를 취소하고 커밋을 늦추는 동안 B 가 process_orders →
+# 취소가 이겨야 한다(주문 cancelled, 체결 0)
+echo "== cancel vs process"
+OID="$(psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -At -c "insert into sp.orders (participant_id, market, symbol, side, order_type, trade_date, fill_basis, qty, limit_price, status, reserved_amount, created_at) values (1, 'KR', '999990', 'buy', 'limit', '2026-11-05', '1m', 1, 69900, 'reserved', 70000, '2026-11-04 07:00:00+00') returning id" | head -1)"
+psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -At \
+  -c "begin" \
+  -c "select set_config('request.jwt.claims', '{\"sub\":\"00000000-0000-4000-8000-000000000001\",\"role\":\"authenticated\"}', true)" \
+  -c "set local role authenticated" \
+  -c "select sp.cancel_order($OID)" \
+  -c "select pg_sleep(1.5)" \
+  -c "commit" > /dev/null &
+A_PID=$!
+psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -At -c "select pg_sleep(0.5)" -c "select sp.process_orders('KR', '2026-11-05 00:01:00+00')" > /dev/null
+wait "$A_PID"
+RESULT="$(psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -At -c "select o.status || ':' || (select count(*) from sp.fills f where f.order_id = o.id) from sp.orders o where o.id = $OID")"
+echo "order $OID: $RESULT"
+if [[ "$RESULT" != "cancelled:0" ]]; then echo "FAIL cancel vs process ($RESULT)"; exit 1; fi
+echo "PASS cancel vs process"

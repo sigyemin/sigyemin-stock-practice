@@ -72,6 +72,8 @@ function memDb(over = {}) {
     saveCandles: async (r) => saved.candles.push(...r),
     saveFx: async (d, v, s) => saved.fx.push({ d, v, s }),
     saveCalendar: async (r) => saved.calendar.push(...r),
+    processOrders: async (m) => { saved.processed = [...(saved.processed ?? []), m]; return 1; },
+    expireOrders: async (m) => { saved.expired = [...(saved.expired ?? []), m]; return 2; },
   };
   return { db, saved };
 }
@@ -99,7 +101,7 @@ test('tick-kr: 지연 모드면 외부 호출 없이 건너뜀', async () => {
   const { db } = memDb({ kr_quote_mode: 'delayed' });
   let called = false;
   const kis = new Proxy({}, { get: () => { called = true; return async () => ({}); } });
-  assert.deepEqual(await runTickKr({ db, kis, now: OPEN_KR, sleep: async () => {} }), { status: 'skipped', reason: 'mode_delayed' });
+  assert.deepEqual(await runTickKr({ db, kis, now: OPEN_KR, sleep: async () => {} }), { status: 'skipped', reason: 'mode_delayed', expired: 2 });
   assert.equal(called, false);
 });
 
@@ -222,4 +224,43 @@ test('instrument-lookup: 인증·입력 검사, 공급자 키 없음·없는 종
   const bf = lookupHandler({ backfill: async () => { throw new Error('x'); } });
   const r = await bf.call('tok-min', { market: 'KR', symbol: '999991' });
   assert.deepEqual([r.status, r.body.candles], [200, 0], '일봉 실패해도 종목 추가는 성공');
+});
+
+test('tick: 시세 저장 뒤 주문 처리, 정규장이 끝난 유예 시간에는 당일 만료도', async () => {
+  const kisOk = fakeKis();
+  const a = memDb();
+  const r1 = await runTickKr({ db: a.db, kis: kisOk, now: OPEN_KR, sleep: async () => {} });
+  assert.deepEqual([r1.filled, r1.expired, a.saved.processed, a.saved.expired], [1, 0, ['KR'], undefined], '장중: 처리만');
+  const b = memDb();
+  const r2 = await runTickKr({ db: b.db, kis: kisOk, now: () => new Date('2026-11-04T06:32:00Z'), sleep: async () => {} });
+  assert.deepEqual([r2.filled, r2.expired, b.saved.expired], [1, 2, ['KR']], '15:32(유예): 처리 + 만료');
+  const c = memDb();
+  c.db.processOrders = async () => { throw Object.assign(new Error('x'), { name: 'Error' }); };
+  const r3 = await runTickKr({ db: c.db, kis: kisOk, now: OPEN_KR, sleep: async () => {} });
+  assert.equal(r3.status, 'ok', '주문 처리 오류가 시세 수집 결과를 망치지 않음');
+  assert.ok(r3.errors.some((e) => e.startsWith('orders:')));
+  const u = memDb();
+  u.db.watchSymbols = async () => [];
+  const r4 = await runTickUs({ db: u.db, alpaca: { snapshots: async () => ({}), bars: async () => ({}) }, now: () => new Date('2026-11-02T21:03:00Z') });
+  assert.deepEqual([r4.filled, r4.expired], [1, 2], '미국: 관심 종목이 없어도 주문은 처리·만료');
+});
+
+test('tick: 지연 모드·장 밖·키 없음으로 건너뛰어도 만료는 실행(리뷰 SP-028 M2)', async () => {
+  for (const [name, run] of [
+    ['KR 지연 모드', (db) => runTickKr({ db, kis: fakeKis(), now: OPEN_KR, sleep: async () => {} })],
+    ['KR 장 밖', (db) => runTickKr({ db, kis: fakeKis(), now: () => new Date('2026-11-04T09:00:00Z'), sleep: async () => {} })],
+    ['KR 키 없음', (db) => runTickKr({ db, kis: null, now: OPEN_KR, sleep: async () => {} })],
+    ['US 장 밖', (db) => runTickUs({ db, alpaca: null, now: () => new Date('2026-11-03T03:00:00Z') })],
+    ['US 키 없음', (db) => runTickUs({ db, alpaca: null, now: () => new Date('2026-11-02T16:00:00Z') })],
+  ]) {
+    const m = memDb(name === 'KR 지연 모드' ? { kr_quote_mode: 'delayed' } : {});
+    const r = await run(m.db);
+    assert.ok(r.status !== 'ok', name);
+    assert.equal(r.expired, 2, name);
+    assert.equal(m.saved.processed, undefined, `${name}: 처리는 안 함`);
+  }
+  const bad = memDb();
+  bad.db.expireOrders = async () => { throw new Error('x'); };
+  const r = await runTickKr({ db: bad.db, kis: null, now: OPEN_KR, sleep: async () => {} });
+  assert.deepEqual([r.reason, r.expired, r.errors], ['kis_not_configured', 0, ['orders:expire']], '만료 오류여도 원래 사유 유지');
 });
