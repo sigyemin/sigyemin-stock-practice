@@ -5,6 +5,8 @@
 --   * 함수는 verify_jwt = false. 대신 x-cron-token 헤더를 sp.server_kv 'cron_token' 과 비교한다(함수 코드).
 --   * cron_token 은 아래에서 DB 안에서 무작위로 만든다 → 사람이 값을 보거나 옮길 일이 없다.
 --   * project_url·publishable_key 는 문서 예시대로 Vault 에 둔다(publishable 키는 공개 값).
+--   * cron_token 을 Vault 가 아니라 sp.server_kv 에 두는 이유: 함수(service_role)가 비교하려고 읽어야 하는데
+--     server_kv 는 service_role 에만 권한이 있어(브라우저·anon 0) Vault 를 함수에 열어 주는 것보다 범위가 좁다.
 -- 다시 실행해도 된다(같은 이름의 작업은 덮어씀, 토큰은 이미 있으면 그대로).
 
 -- 1) 확장(대시보드 Database > Extensions 에서 켜도 같다)

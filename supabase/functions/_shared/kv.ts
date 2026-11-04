@@ -6,6 +6,8 @@ export type KvRow = { value: string; expires_at: string | null; updated_at?: str
 export interface KvStore {
   get(key: string): Promise<KvRow | null>;
   set(key: string, value: string, expiresAt: Date | null): Promise<void>;
+  // key 의 마지막 기록이 minGapMs 보다 오래됐을 때만 지금 시각으로 기록하고 true. 원자적(DB: sp.kv_claim)
+  claim(key: string, minGapMs: number): Promise<boolean>;
 }
 
 export class MemoryKv implements KvStore {
@@ -13,8 +15,16 @@ export class MemoryKv implements KvStore {
   async get(key: string) {
     return this.rows.get(key) ?? null;
   }
+  now: () => Date = () => new Date();
   async set(key: string, value: string, expiresAt: Date | null) {
-    this.rows.set(key, { value, expires_at: expiresAt ? expiresAt.toISOString() : null, updated_at: new Date().toISOString() });
+    this.rows.set(key, { value, expires_at: expiresAt ? expiresAt.toISOString() : null, updated_at: this.now().toISOString() });
+  }
+  async claim(key: string, minGapMs: number) {
+    const row = this.rows.get(key);
+    const t = this.now().getTime();
+    if (row?.updated_at && t - Date.parse(row.updated_at) < minGapMs) return false;
+    await this.set(key, this.now().toISOString(), null);
+    return true;
   }
 }
 

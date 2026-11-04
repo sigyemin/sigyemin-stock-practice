@@ -340,6 +340,20 @@ select t.check(not exists (select 1 from pg_class c join pg_namespace n on n.oid
                and not exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace),
                'I29 public 스키마에 만든 것 없음');
 
+-- ═════════ J. sp.kv_claim (0005, KIS 토큰 발급 간격 원자화) ═════════
+select t.check(t.count_as('서버', 'select count(*) from (select sp.kv_claim(''claim_test'', 65000) as ok) x where ok') = 1, 'J1 처음 claim 성공(행 생성)');
+select t.check(t.count_as('서버', 'select count(*) from (select sp.kv_claim(''claim_test'', 65000) as ok) x where ok') = 0, 'J2 간격 안 두 번째 claim 실패');
+select t.check(t.count_as('서버', 'select count(*) from (select sp.kv_claim(''claim_test'', 0) as ok) x where ok') = 1, 'J3 간격 0 이면 다시 성공');
+update sp.server_kv set updated_at = now() - interval '66 seconds' where key = 'claim_test';
+select t.check(t.count_as('서버', 'select count(*) from (select sp.kv_claim(''claim_test'', 65000) as ok) x where ok') = 1, 'J4 66초 지나면 성공');
+select t.check(t.count_as('서버', 'select count(*) from (select sp.kv_claim(''claim_test'', 65000) as ok) x where ok') = 0, 'J5 바로 다시 하면 실패');
+-- 한 문장 안에서 두 번 claim(같은 스냅샷이라도 두 번째는 실패해야 함)
+select t.check(t.count_as('서버', 'select count(*) from (select sp.kv_claim(''claim_two'', 65000) as a, sp.kv_claim(''claim_two'', 65000) as b) x where a and not b') = 1,
+               'J6 같은 문장의 두 번째 claim 실패');
+select t.check(t.try('민', 'select sp.kv_claim(''x'', 1)') = '42501', 'J7 브라우저 사용자 실행 거부');
+select t.check(t.try('anon', 'select sp.kv_claim(''x'', 1)') = '42501', 'J8 anon 실행 거부');
+select t.check(t.try('서버', 'select sp.kv_claim(''x'', -1)') = '22023', 'J9 음수 간격 거부');
+
 -- ═════════ H. 함수 실행 권한 ═════════
 -- 앞으로 만들 함수: 기본 권한으로 PUBLIC EXECUTE 가 붙지 않아야 한다(리뷰 M1 재현)
 create function sp.future_fn() returns int language sql security definer set search_path = '' as $$ select 1 $$;
@@ -357,15 +371,16 @@ select t.check(
   not exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE')
     and p.proacl is not null
     and not has_function_privilege('anon', p.oid, 'EXECUTE')
-    and not has_function_privilege('service_role', p.oid, 'EXECUTE')
+    and has_function_privilege('service_role', p.oid, 'EXECUTE') = (p.proname in ('kv_claim'))
     and has_function_privilege('authenticated', p.oid, 'EXECUTE') = (p.proname in ('me', 'request_fund')),
-  format('H4 sp.%s(%s) 실행 권한: PUBLIC·anon·service_role 없음, authenticated %s', p.proname, pg_get_function_identity_arguments(p.oid),
-         case when p.proname in ('me', 'request_fund') then '허용' else '없음' end),
+  format('H4 sp.%s(%s) 실행 권한: PUBLIC·anon 없음, authenticated %s, service_role %s', p.proname, pg_get_function_identity_arguments(p.oid),
+         case when p.proname in ('me', 'request_fund') then '허용' else '없음' end,
+         case when p.proname in ('kv_claim') then '허용' else '없음' end),
   coalesce(p.proacl::text, 'proacl null(기본 권한 = PUBLIC)'))
 from pg_proc p
 where p.pronamespace = 'sp'::regnamespace
 order by p.proname;
-select t.check((select count(*) from pg_proc where pronamespace = 'sp'::regnamespace) >= 7, 'H5 sp 함수 검사 대상 7개 이상',
+select t.check((select count(*) from pg_proc where pronamespace = 'sp'::regnamespace) >= 8, 'H5 sp 함수 검사 대상 8개 이상',
                (select count(*)::text from pg_proc where pronamespace = 'sp'::regnamespace));
 
 -- ═════════ 결과 ═════════

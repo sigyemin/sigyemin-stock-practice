@@ -40,6 +40,8 @@ export const KIS_ALLOW: AllowRule[] = [
 // 토큰 재사용 규칙(우리 쪽)
 export const TOKEN_REUSE_MARGIN_MS = 30 * 60 * 1000; // 만료 30분 전부터는 새로 발급
 export const TOKEN_ISSUE_MIN_GAP_MS = 65 * 1000; // 발급 시도 간격 최소 65초(발급할 때마다 알림톡이 가므로 연속 발급 방지)
+// 새 토큰으로도 401·403 이면(또는 발급 자체가 401·403 이면) 원인이 만료가 아니다 → 이 시간 동안 발급 금지
+export const AUTH_BLOCK_MS = 30 * 60 * 1000;
 
 export class KisError extends Error {
   code: string;
@@ -62,18 +64,33 @@ export function createKis(deps: KisDeps) {
   const now = deps.now ?? (() => new Date());
   const f = guardedFetch(KIS_ALLOW, deps.fetch);
 
+  async function blockedUntil(): Promise<number> {
+    const row = await deps.kv.get('kis_token_bad_until');
+    const t = row ? Date.parse(row.value) : NaN;
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  async function blockIssuing(reason: string): Promise<never> {
+    const until = new Date(now().getTime() + AUTH_BLOCK_MS);
+    await deps.kv.set('kis_token_bad_until', until.toISOString(), until);
+    throw new KisError('auth_failed', reason);
+  }
+
   async function issueToken(): Promise<string> {
-    const last = await deps.kv.get('kis_token_issue_at');
-    if (last && now().getTime() - Date.parse(last.value) < TOKEN_ISSUE_MIN_GAP_MS) {
+    if ((await blockedUntil()) > now().getTime()) {
+      throw new KisError('auth_blocked', 'token issue blocked after auth failure');
+    }
+    // 발급 간격 확인 + 기록을 DB 에서 한 번에(동시 실행 두 개가 둘 다 발급하지 않게, sp.kv_claim)
+    if (!(await deps.kv.claim('kis_token_issue_at', TOKEN_ISSUE_MIN_GAP_MS))) {
       throw new KisError('token_issue_throttled', 'token issue attempted too soon');
     }
-    await deps.kv.set('kis_token_issue_at', now().toISOString(), null);
     const res = await f(`${KIS_ORIGIN}${KIS_PATHS.token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json; charset=utf-8' },
       body: JSON.stringify({ grant_type: 'client_credentials', appkey: deps.appKey, appsecret: deps.appSecret }),
     });
     const body = await res.json().catch(() => ({}));
+    if (res.status === 401 || res.status === 403) return blockIssuing('token issue rejected');
     if (!res.ok || typeof body.access_token !== 'string') {
       throw new KisError(String(body.error_code ?? res.status), 'token issue failed');
     }
@@ -105,8 +122,12 @@ export function createKis(deps: KisDeps) {
       },
     });
     const body = await res.json().catch(() => ({}));
-    // 토큰 만료로 보이는 응답이면 한 번만 새 토큰으로 다시 시도 (만료 오류 코드 값은 공식 문서로 확인 못 함 → HTTP 401·403 기준)
-    if ((res.status === 401 || res.status === 403) && !retried) return get(path, trId, params, true);
+    // 토큰 만료로 보이는 응답이면 한 번만 새 토큰으로 다시 시도 (만료 오류 코드 값은 공식 문서로 확인 못 함 → HTTP 401·403 기준).
+    // 새 토큰으로도 401·403 이면 만료 문제가 아니므로 AUTH_BLOCK_MS 동안 재발급을 막는다(알림톡 반복 방지).
+    if (res.status === 401 || res.status === 403) {
+      if (!retried) return get(path, trId, params, true);
+      return blockIssuing('rejected with fresh token');
+    }
     if (!res.ok || body.rt_cd !== '0') {
       throw new KisError(String(body.msg_cd ?? res.status), String(body.msg1 ?? 'kis error'));
     }
