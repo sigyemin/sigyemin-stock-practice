@@ -1,0 +1,26 @@
+{
+ "rt_cd": "0",
+ "msg_cd": "MCA00000",
+ "msg1": "정상처리 되었습니다.",
+ "output1": {
+  "hts_kor_isnm": "시험종목가"
+ },
+ "output2": [
+  {
+   "stck_bsop_date": "20261104",
+   "stck_clpr": "70100",
+   "stck_oprc": "69800",
+   "stck_hgpr": "70500",
+   "stck_lwpr": "69500",
+   "acml_vol": "1234567"
+  },
+  {
+   "stck_bsop_date": "20261103",
+   "stck_clpr": "69900",
+   "stck_oprc": "69000",
+   "stck_hgpr": "70000",
+   "stck_lwpr": "68900",
+   "acml_vol": "1000000"
+  }
+ ]
+}

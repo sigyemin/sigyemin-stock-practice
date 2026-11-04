@@ -1,0 +1,13 @@
+{
+ "rt_cd": "0",
+ "msg_cd": "MCA00000",
+ "msg1": "정상처리 되었습니다.",
+ "output": {
+  "prdt_name": "시험종목가보통주",
+  "prdt_abrv_name": "시험종목가",
+  "scty_grp_id_cd": "ST",
+  "scts_mket_lstg_dt": "19900101",
+  "kosdaq_mket_lstg_dt": "",
+  "lstg_abol_dt": ""
+ }
+}

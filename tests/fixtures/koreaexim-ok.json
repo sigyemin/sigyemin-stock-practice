@@ -1,0 +1,14 @@
+[
+ {
+  "result": 1,
+  "cur_unit": "JPY(100)",
+  "deal_bas_r": "950.12",
+  "cur_nm": "일본 옌"
+ },
+ {
+  "result": 1,
+  "cur_unit": "USD",
+  "deal_bas_r": "1,401.5",
+  "cur_nm": "미국 달러"
+ }
+]

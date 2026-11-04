@@ -5,3 +5,19 @@ project_id = "sigyemin-stock-practice"
 # fund-grant 는 새 API 키(publishable) 방식이라 플랫폼 verify_jwt 대신 함수 코드에서 사용자 JWT 를 확인한다.
 [functions.fund-grant]
 verify_jwt = false
+
+# M2: 모두 코드에서 확인한다(instrument-lookup = 사용자 JWT, 나머지 = cron 토큰 x-cron-token)
+[functions.instrument-lookup]
+verify_jwt = false
+
+[functions.tick-kr]
+verify_jwt = false
+
+[functions.tick-us]
+verify_jwt = false
+
+[functions.fx-sync]
+verify_jwt = false
+
+[functions.ref-sync]
+verify_jwt = false
