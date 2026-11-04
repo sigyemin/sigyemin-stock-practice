@@ -20,9 +20,12 @@ jobs:
         run: npm test
       - name: 보안 검사(innerHTML·eval·new Function, 키 패턴, CSP meta, vendor SRI)
         run: npm run check:security
-      - name: Edge Function 타입 검사(Deno, npm 의 deno 2.9.6 고정)
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.6
+      - name: Edge Function 타입 검사(Deno 2.9.6)
         working-directory: supabase/functions
-        run: npx --yes deno@2.9.6 check --no-lock --node-modules-dir=none --no-config */index.ts
+        run: deno check --no-lock --node-modules-dir=none --no-config */index.ts
 
   sql:
     runs-on: ubuntu-latest

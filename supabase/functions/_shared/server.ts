@@ -30,6 +30,11 @@ export class SupabaseKv implements KvStore {
       .upsert({ key, value, expires_at: expiresAt?.toISOString() ?? null, updated_at: new Date().toISOString() });
     if (error) throw new Error('kv_write');
   }
+  async claim(key: string, minGapMs: number): Promise<boolean> {
+    const { data, error } = await this.db.rpc('kv_claim', { p_key: key, p_min_gap_ms: Math.round(minGapMs) });
+    if (error) throw new Error('kv_claim');
+    return data === true;
+  }
 }
 
 export function jobDb(db: Db): JobDb {

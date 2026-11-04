@@ -4,6 +4,7 @@
 //  3. 저장소 전체에 실제 키처럼 생긴 값 0건(sb_secret_…, JWT, sk_live/sk_test, PEM 개인키)
 //  4. app/index.html 에 CSP meta 존재, vendor 스크립트에 integrity 속성 + VENDOR.md 의 해시와 일치
 //  5. app/config.js 는 프로젝트 URL + publishable 키만, CSP connect-src 와 같은 호스트
+//  6. supabase/functions 에서 외부 호출(fetch( · WebSocket · Deno.connect · XMLHttpRequest)은 _shared/http.ts(허용 목록) 안에서만
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, relative, sep } from 'node:path';
@@ -80,6 +81,16 @@ for (const m of html.matchAll(/<script[^>]*src="(vendor\/[^"]+)"[^>]*>/g)) {
   const actual = 'sha384-' + createHash('sha384').update(readFileSync(join(ROOT, 'app', src))).digest('base64');
   if (actual !== sri) problems.push(`app/index.html: ${src} integrity 불일치`);
   if (!vendorMd.includes(actual)) problems.push(`VENDOR.md: ${src} 해시 기록 없음`);
+}
+
+// 6. 서버 함수의 외부 호출은 허용 목록 fetch(_shared/http.ts)로만. 다른 파일은 fetch 를 "값으로 넘기기"만 허용(호출 금지)
+const NET_CALL = [/\bfetch\s*\(/, /new\s+WebSocket\b/, /\bDeno\.connect(Tls)?\s*\(/, /\bXMLHttpRequest\b/, /\bDeno\.(Http|serveHttp)Client\b/];
+for (const p of all.filter((x) => rel(x).startsWith('supabase/functions/') && /\.(ts|js|mjs)$/.test(rel(x)))) {
+  if (rel(p) === 'supabase/functions/_shared/http.ts') continue;
+  text(p).split('\n').forEach((line, i) => {
+    if (/^\s*\/\//.test(line)) return; // 주석 줄
+    for (const re of NET_CALL) if (re.test(line)) problems.push(`${rel(p)}:${i + 1} 직접 외부 호출 금지(http.ts 의 guardedFetch 사용) ${re}`);
+  });
 }
 
 // 5. config.js: URL 은 https://<ref>.supabase.co, 키는 publishable(sb_publishable_…) 또는 'TODO' 만

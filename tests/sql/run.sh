@@ -42,3 +42,23 @@ run "$OPS_TMP"
 run "$OPS_TMP"
 rm -f "$OPS_TMP"
 run "$ROOT/tests/sql/ops.test.sql"
+
+# kv_claim 동시 실행: 두 연결이 같은 키를 거의 동시에 claim → 하나만 true (행이 없을 때·있을 때 둘 다)
+echo "== concurrency"
+for KEY in conc_new conc_old; do
+  if [[ "$KEY" == conc_old ]]; then
+    psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -c "insert into sp.server_kv (key, value, updated_at) values ('$KEY', 'x', now() - interval '1 hour')"
+  fi
+  A_OUT="$(mktemp)"
+  psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -At -c "begin" -c "select sp.kv_claim('$KEY', 65000)" -c "select pg_sleep(1.5)" -c "commit" > "$A_OUT" &
+  A_PID=$!
+  B="$(psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -At -c "select pg_sleep(0.5)" -c "select sp.kv_claim('$KEY', 65000)" | tail -1)"
+  wait "$A_PID"
+  A="$(grep -E '^[tf]$' "$A_OUT" | head -1)"
+  rm -f "$A_OUT"
+  echo "$KEY: A=$A B=$B"
+  if [[ "$A" != "t" || "$B" != "f" ]]; then
+    echo "FAIL kv_claim concurrency ($KEY)"; exit 1
+  fi
+done
+echo "PASS kv_claim concurrency (2)"

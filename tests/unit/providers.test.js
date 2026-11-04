@@ -112,6 +112,7 @@ test('allowlist: 수출입은행 1개 경로, 지연 모드 어댑터는 비어 
 test('KIS 토큰: 한 번 발급 후 재사용, 만료 30분 전부터 새로 발급', async () => {
   const kv = new MemoryKv();
   let now = new Date('2026-11-04T01:00:00Z');
+  kv.now = () => now;
   const k = fakeKis();
   const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch: k.fetch, now: () => now });
   await kis.price('999990');
@@ -139,7 +140,8 @@ test('KIS 토큰: 다른 실행(새 인스턴스)도 DB 에 저장된 토큰을 
 test('KIS 토큰: 발급 실패 뒤 65초 안에는 다시 발급하지 않음(알림톡·한도 보호)', async () => {
   const kv = new MemoryKv();
   let now = new Date('2026-11-04T01:00:00Z');
-  const bad = fakeKis({ tokenStatus: 403 });
+  kv.now = () => now;
+  const bad = fakeKis({ tokenStatus: 500 });
   const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch: bad.fetch, now: () => now });
   await assert.rejects(kis.price('999990'), (e) => e instanceof KisError && e.code === 'EGW00133');
   await assert.rejects(kis.price('999990'), (e) => e instanceof KisError && e.code === 'token_issue_throttled');
@@ -147,6 +149,60 @@ test('KIS 토큰: 발급 실패 뒤 65초 안에는 다시 발급하지 않음(�
   now = new Date(now.getTime() + 66000);
   await assert.rejects(kis.price('999990'), (e) => e.code === 'EGW00133');
   assert.equal(bad.calls.filter((c) => c.path === KIS_PATHS.token).length, 2);
+});
+
+test('KIS 토큰: 발급이 401·403 이면 30분 동안 발급 금지', async () => {
+  const kv = new MemoryKv();
+  let now = new Date('2026-11-04T01:00:00Z');
+  kv.now = () => now;
+  const bad = fakeKis({ tokenStatus: 403 });
+  const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch: bad.fetch, now: () => now });
+  await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_failed');
+  now = new Date(now.getTime() + 2 * 60000); // 2분 뒤(65초 간격은 지남)
+  await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_blocked');
+  now = new Date(now.getTime() + 27 * 60000); // 29분 뒤
+  await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_blocked');
+  assert.equal(bad.calls.filter((c) => c.path === KIS_PATHS.token).length, 1, '차단 동안 발급 요청 0');
+  now = new Date(now.getTime() + 2 * 60000); // 31분 뒤
+  await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_failed');
+  assert.equal(bad.calls.filter((c) => c.path === KIS_PATHS.token).length, 2);
+});
+
+test('KIS: 새 토큰으로도 401 이면 발급을 막고, 다음 실행도 재발급하지 않음(리뷰 L1)', async () => {
+  const kv = new MemoryKv();
+  let now = new Date('2026-11-04T01:00:00Z');
+  kv.now = () => now;
+  await kv.set('kis_token', 'old', new Date('2026-11-05T00:00:00Z'));
+  const calls = [];
+  const fetch = async (url) => {
+    const u = new URL(url);
+    calls.push(u.pathname);
+    if (u.pathname === KIS_PATHS.token) return res({ access_token: `new${calls.length}`, expires_in: 86400 });
+    return res({ rt_cd: '1', msg_cd: 'x' }, 401); // 항상 401(만료가 원인이 아님)
+  };
+  const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch, now: () => now });
+  await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_failed');
+  assert.deepEqual(calls, [KIS_PATHS.price, KIS_PATHS.token, KIS_PATHS.price], '재발급 1번 + 재시도 1번');
+  // 이후 매분 실행(cron)을 30분 동안 흉내: 발급 요청은 더 없어야 함
+  for (let i = 1; i <= 29; i++) {
+    now = new Date(Date.parse('2026-11-04T01:00:00Z') + i * 60000);
+    await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_blocked');
+  }
+  assert.equal(calls.filter((p) => p === KIS_PATHS.token).length, 1);
+  assert.ok((await kv.get('kis_token_bad_until')).value.startsWith('2026-11-04T01:30'));
+});
+
+test('KIS 토큰: 동시에 두 실행이 발급하려 해도 한 번만(claim, 리뷰 L2)', async () => {
+  const kv = new MemoryKv();
+  const now = () => new Date('2026-11-04T01:00:00Z');
+  kv.now = now;
+  const k = fakeKis();
+  const a = createKis({ appKey: 'k', appSecret: 's', kv, fetch: k.fetch, now });
+  const b = createKis({ appKey: 'k', appSecret: 's', kv, fetch: k.fetch, now });
+  const r = await Promise.allSettled([a.token(), b.token()]);
+  assert.equal(r.filter((x) => x.status === 'fulfilled').length, 1);
+  assert.equal(r.find((x) => x.status === 'rejected').reason.code, 'token_issue_throttled');
+  assert.equal(k.calls.filter((c) => c.path === KIS_PATHS.token).length, 1);
 });
 
 test('KIS 토큰 만료 시각: expires_in 우선, 없으면 KST 문자열', () => {
