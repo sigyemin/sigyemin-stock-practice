@@ -85,18 +85,18 @@ export function jobDb(db: Db): JobDb {
 export function kisFromEnv(kv: KvStore) {
   const appKey = env('KIS_APP_KEY');
   const appSecret = env('KIS_APP_SECRET');
-  return appKey && appSecret ? createKis({ appKey, appSecret, kv, fetch }) : null;
+  return appKey && appSecret ? createKis({ appKey, appSecret, kv, transport: fetch }) : null;
 }
 
 export function alpacaFromEnv() {
   const keyId = env('ALPACA_KEY_ID');
   const secretKey = env('ALPACA_SECRET_KEY');
-  return keyId && secretKey ? createAlpaca({ keyId, secretKey, fetch }) : null;
+  return keyId && secretKey ? createAlpaca({ keyId, secretKey, transport: fetch }) : null;
 }
 
 export function eximFromEnv() {
   const authKey = env('KOREAEXIM_AUTHKEY');
-  return authKey ? createExim({ authKey, fetch }) : null;
+  return authKey ? createExim({ authKey, transport: fetch }) : null;
 }
 
 const json = (status: number, body: unknown) =>

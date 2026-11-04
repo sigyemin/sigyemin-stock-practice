@@ -15,8 +15,8 @@ export class EximError extends Error {
   }
 }
 
-export function createExim(deps: { authKey: string; fetch: FetchLike }) {
-  const f = guardedFetch(EXIM_ALLOW, deps.fetch);
+export function createExim(deps: { authKey: string; transport: FetchLike }) {
+  const f = guardedFetch(EXIM_ALLOW, deps.transport);
   return {
     async usdkrw(yyyymmdd: string): Promise<number | null> {
       const q = new URLSearchParams({ authkey: deps.authKey, searchdate: yyyymmdd, data: 'AP01' });

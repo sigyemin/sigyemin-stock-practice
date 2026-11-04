@@ -56,13 +56,13 @@ export type KisDeps = {
   appKey: string;
   appSecret: string;
   kv: KvStore;
-  fetch: FetchLike; // 실제 fetch. 아래에서 allowlist 로 감싼다
+  transport: FetchLike; // 실제 네트워크 함수. 아래에서 허용 목록으로 감싼다
   now?: () => Date;
 };
 
 export function createKis(deps: KisDeps) {
   const now = deps.now ?? (() => new Date());
-  const f = guardedFetch(KIS_ALLOW, deps.fetch);
+  const f = guardedFetch(KIS_ALLOW, deps.transport);
 
   async function blockedUntil(): Promise<number> {
     const row = await deps.kv.get('kis_token_bad_until');

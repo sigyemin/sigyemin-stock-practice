@@ -48,7 +48,13 @@ async function render() {
   } catch {
     return show(nav(), el('p', { className: 'notice', text: '잔고를 불러오지 못했습니다.' }));
   }
-  const chartRoute = /^#\/chart\/(KR|US)\/([0-9A-Z.]{1,10})$/.exec(decodeURIComponent(location.hash));
+  let hash = location.hash;
+  try {
+    hash = decodeURIComponent(hash);
+  } catch {
+    hash = '#/home'; // 잘못된 % 인코딩이면 홈으로
+  }
+  const chartRoute = /^#\/chart\/(KR|US)\/([0-9A-Z.]{1,10})$/.exec(hash);
   let screen;
   if (location.hash === '#/funds') screen = fundsScreen(data, me, () => {});
   else if (location.hash === '#/search') screen = searchScreen(me);

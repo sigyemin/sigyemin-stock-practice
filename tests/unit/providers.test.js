@@ -114,7 +114,7 @@ test('KIS 토큰: 한 번 발급 후 재사용, 만료 30분 전부터 새로 �
   let now = new Date('2026-11-04T01:00:00Z');
   kv.now = () => now;
   const k = fakeKis();
-  const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch: k.fetch, now: () => now });
+  const kis = createKis({ appKey: 'k', appSecret: 's', kv, transport: k.fetch, now: () => now });
   await kis.price('999990');
   await kis.price('999990');
   await kis.minuteBars('999990', '100000');
@@ -131,9 +131,9 @@ test('KIS 토큰: 다른 실행(새 인스턴스)도 DB 에 저장된 토큰을 
   const kv = new MemoryKv();
   const now = () => new Date('2026-11-04T01:00:00Z');
   const k1 = fakeKis();
-  await createKis({ appKey: 'k', appSecret: 's', kv, fetch: k1.fetch, now }).price('999990');
+  await createKis({ appKey: 'k', appSecret: 's', kv, transport: k1.fetch, now }).price('999990');
   const k2 = fakeKis();
-  await createKis({ appKey: 'k', appSecret: 's', kv, fetch: k2.fetch, now }).price('999990');
+  await createKis({ appKey: 'k', appSecret: 's', kv, transport: k2.fetch, now }).price('999990');
   assert.equal(k2.calls.filter((c) => c.path === KIS_PATHS.token).length, 0);
 });
 
@@ -142,7 +142,7 @@ test('KIS 토큰: 발급 실패 뒤 65초 안에는 다시 발급하지 않음(�
   let now = new Date('2026-11-04T01:00:00Z');
   kv.now = () => now;
   const bad = fakeKis({ tokenStatus: 500 });
-  const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch: bad.fetch, now: () => now });
+  const kis = createKis({ appKey: 'k', appSecret: 's', kv, transport: bad.fetch, now: () => now });
   await assert.rejects(kis.price('999990'), (e) => e instanceof KisError && e.code === 'EGW00133');
   await assert.rejects(kis.price('999990'), (e) => e instanceof KisError && e.code === 'token_issue_throttled');
   assert.equal(bad.calls.filter((c) => c.path === KIS_PATHS.token).length, 1);
@@ -156,7 +156,7 @@ test('KIS 토큰: 발급이 401·403 이면 30분 동안 발급 금지', async (
   let now = new Date('2026-11-04T01:00:00Z');
   kv.now = () => now;
   const bad = fakeKis({ tokenStatus: 403 });
-  const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch: bad.fetch, now: () => now });
+  const kis = createKis({ appKey: 'k', appSecret: 's', kv, transport: bad.fetch, now: () => now });
   await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_failed');
   now = new Date(now.getTime() + 2 * 60000); // 2분 뒤(65초 간격은 지남)
   await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_blocked');
@@ -180,7 +180,7 @@ test('KIS: 새 토큰으로도 401 이면 발급을 막고, 다음 실행도 재
     if (u.pathname === KIS_PATHS.token) return res({ access_token: `new${calls.length}`, expires_in: 86400 });
     return res({ rt_cd: '1', msg_cd: 'x' }, 401); // 항상 401(만료가 원인이 아님)
   };
-  const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch, now: () => now });
+  const kis = createKis({ appKey: 'k', appSecret: 's', kv, transport: fetch, now: () => now });
   await assert.rejects(kis.price('999990'), (e) => e.code === 'auth_failed');
   assert.deepEqual(calls, [KIS_PATHS.price, KIS_PATHS.token, KIS_PATHS.price], '재발급 1번 + 재시도 1번');
   // 이후 매분 실행(cron)을 30분 동안 흉내: 발급 요청은 더 없어야 함
@@ -197,8 +197,8 @@ test('KIS 토큰: 동시에 두 실행이 발급하려 해도 한 번만(claim, 
   const now = () => new Date('2026-11-04T01:00:00Z');
   kv.now = now;
   const k = fakeKis();
-  const a = createKis({ appKey: 'k', appSecret: 's', kv, fetch: k.fetch, now });
-  const b = createKis({ appKey: 'k', appSecret: 's', kv, fetch: k.fetch, now });
+  const a = createKis({ appKey: 'k', appSecret: 's', kv, transport: k.fetch, now });
+  const b = createKis({ appKey: 'k', appSecret: 's', kv, transport: k.fetch, now });
   const r = await Promise.allSettled([a.token(), b.token()]);
   assert.equal(r.filter((x) => x.status === 'fulfilled').length, 1);
   assert.equal(r.find((x) => x.status === 'rejected').reason.code, 'token_issue_throttled');
@@ -225,7 +225,7 @@ test('KIS 401 이면 토큰을 새로 받아 한 번만 다시 시도', async ()
     if (first) { first = false; return res({ rt_cd: '1', msg_cd: 'x' }, 401); }
     return res(fx('kis-inquire-price.json'));
   };
-  const p = await createKis({ appKey: 'k', appSecret: 's', kv, fetch, now }).price('999990');
+  const p = await createKis({ appKey: 'k', appSecret: 's', kv, transport: fetch, now }).price('999990');
   assert.equal(p.price, 70100);
   assert.deepEqual(calls, [KIS_PATHS.price, KIS_PATHS.token, KIS_PATHS.price]);
 });
@@ -234,7 +234,7 @@ test('KIS 401 이면 토큰을 새로 받아 한 번만 다시 시도', async ()
 test('KIS 현재가·분봉·일봉·휴장일·종목 해석', async () => {
   const kv = new MemoryKv();
   const k = fakeKis();
-  const kis = createKis({ appKey: 'k', appSecret: 's', kv, fetch: k.fetch, now: () => new Date('2026-11-04T01:00:00Z') });
+  const kis = createKis({ appKey: 'k', appSecret: 's', kv, transport: k.fetch, now: () => new Date('2026-11-04T01:00:00Z') });
   const p = await kis.price('999990');
   assert.deepEqual(p, { price: 70100, open: 69800, high: 70500, low: 69500, volume: 1234567, base_price: 69900, upper_limit: 90800, lower_limit: 49000 });
   const m = await kis.minuteBars('999990', '100200');
@@ -259,7 +259,7 @@ test('KIS 현재가·분봉·일봉·휴장일·종목 해석', async () => {
 test('KIS rt_cd 가 0 이 아니면 오류(msg_cd 전달)', async () => {
   const kv = new MemoryKv();
   const fetch = async (url) => new URL(url).pathname === KIS_PATHS.token ? res({ access_token: 't', expires_in: 86400 }) : res({ rt_cd: '1', msg_cd: 'EGW00201', msg1: '초당 거래건수 초과' });
-  await assert.rejects(createKis({ appKey: 'k', appSecret: 's', kv, fetch }).price('999990'), (e) => e.code === 'EGW00201');
+  await assert.rejects(createKis({ appKey: 'k', appSecret: 's', kv, transport: fetch }).price('999990'), (e) => e.code === 'EGW00201');
 });
 
 test('KIS 종목 해석: 주권만, 코스닥 판정, 상장폐지·ETF 제외', () => {
@@ -282,7 +282,7 @@ test('Alpaca 스냅샷·분봉(페이지 이어 받기)·종목', async () => {
     if (u.pathname === '/v2/assets/TSTA') return res(fx('alpaca-asset.json'));
     return res({ message: 'not found' }, 404);
   };
-  const a = createAlpaca({ keyId: 'id', secretKey: 'sec', fetch });
+  const a = createAlpaca({ keyId: 'id', secretKey: 'sec', transport: fetch });
   const s = await a.snapshots(['TSTA', 'TSTB']);
   assert.deepEqual(s.TSTA, { price: 200.5, quote_at: '2026-11-03T20:59:59.000Z', open: 198, high: 201, low: 197.5, volume: 12345, prev_close: 199, daily_t: '2026-11-03T05:00:00.000Z' });
   assert.equal(s.TSTB, undefined, '거래 없는 종목은 빠짐');
@@ -305,7 +305,7 @@ test('수출입은행 매매기준율: 콤마 숫자, 고시 전 빈 배열은 n
   assert.equal(parseUsdKrw([]), null);
   assert.throws(() => parseUsdKrw(fx('koreaexim-badkey.json')), /result 3/);
   const calls = [];
-  const e = createExim({ authKey: 'k', fetch: async (url) => { calls.push(url); return res(fx('koreaexim-ok.json')); } });
+  const e = createExim({ authKey: 'k', transport: async (url) => { calls.push(url); return res(fx('koreaexim-ok.json')); } });
   assert.equal(await e.usdkrw('20261104'), 1401.5);
   assert.match(calls[0], /^https:\/\/oapi\.koreaexim\.go\.kr\/site\/program\/financial\/exchangeJSON\?authkey=k&searchdate=20261104&data=AP01$/);
 });
