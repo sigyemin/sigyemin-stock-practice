@@ -1,5 +1,5 @@
 // 서비스 워커: 앱 껍데기(같은 출처의 정적 파일)만 캐시한다. Supabase API 응답은 캐시하지 않는다.
-const CACHE = 'shell-v2';
+const CACHE = 'shell-v3';
 const SHELL = [
   './',
   './index.html',
@@ -20,6 +20,10 @@ const SHELL = [
   './js/chart-data.js',
   './js/market-time.js',
   './js/market-api.js',
+  './js/order-api.js',
+  './js/order-format.js',
+  './js/screens/order.js',
+  './js/screens/portfolio.js',
   './vendor/klinecharts-10.1.0.umd.min.js',
   './vendor/supabase-2.118.0.umd.js',
 ];

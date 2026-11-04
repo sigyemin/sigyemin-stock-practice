@@ -7,6 +7,8 @@ import { homeScreen } from './screens/home.js';
 import { fundsScreen } from './screens/funds.js';
 import { searchScreen } from './screens/search.js';
 import { chartScreen } from './screens/chart.js';
+import { orderScreen } from './screens/order.js';
+import { portfolioScreen } from './screens/portfolio.js';
 
 const root = document.getElementById('app');
 let me = null;
@@ -19,6 +21,7 @@ function nav() {
   return el('nav', {}, [
     link('#/home', '홈'),
     link('#/search', '종목'),
+    link('#/portfolio', '보유·주문'),
     link('#/funds', '추가 자금'),
     el('button', { text: '로그아웃', attrs: { type: 'button' }, on: { click: () => signOut() } }),
   ]);
@@ -55,10 +58,13 @@ async function render() {
     hash = '#/home'; // 잘못된 % 인코딩이면 홈으로
   }
   const chartRoute = /^#\/chart\/(KR|US)\/([0-9A-Z.]{1,10})$/.exec(hash);
+  const orderRoute = /^#\/order\/(KR|US)\/([0-9A-Z.]{1,10})$/.exec(hash);
   let screen;
   if (location.hash === '#/funds') screen = fundsScreen(data, me, () => {});
   else if (location.hash === '#/search') screen = searchScreen(me);
   else if (chartRoute) screen = chartScreen(me, chartRoute[1], chartRoute[2]);
+  else if (orderRoute) screen = orderScreen(me, orderRoute[1], orderRoute[2]);
+  else if (hash === '#/portfolio') screen = portfolioScreen(me, data);
   else screen = homeScreen(data, me);
   show(nav(), screen);
 }
