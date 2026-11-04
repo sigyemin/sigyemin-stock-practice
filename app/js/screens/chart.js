@@ -174,7 +174,10 @@ export function chartScreen(me, market, symbol) {
   othersToggle.addEventListener('change', loadOverlays);
 
   const node = el('section', {}, [
-    el('p', {}, [el('a', { text: '← 종목', attrs: { href: '#/search' } })]),
+    el('div', { className: 'row between' }, [
+      el('a', { text: '← 종목', attrs: { href: '#/search' } }),
+      el('a', { text: '주문하기', className: 'button-link', attrs: { href: `#/order/${market}/${encodeURIComponent(symbol)}` } }),
+    ]),
     el('div', { className: 'row between' }, [title, badge]),
     price,
     tfBar,
