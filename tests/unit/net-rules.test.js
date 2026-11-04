@@ -142,3 +142,14 @@ test('상대 경로 import 가 supabase/functions 밖을 가리키면 위반(S2)
   assert.ok(netViolations('supabase/functions/x/index.ts', "import { x } from '../../migrations/a.sql';").length > 0, 'supabase/ 다른 폴더');
   assert.ok(netViolations(f, "import { x } from '../http.ts?x=1';").length > 0, '쿼리 붙이기');
 });
+
+test('L11: 검사 대상 밖 확장자 파일·상대 import 는 위반', () => {
+  assert.ok(netViolations('supabase/functions/_shared/x.mts', 'export const a = 1;').length > 0, '.mts 파일');
+  assert.ok(netViolations('supabase/functions/_shared/data.json', '{}').length > 0, '.json 파일');
+  const f = 'supabase/functions/_shared/providers/kis.ts';
+  assert.ok(netViolations(f, "import { x } from '../evil.mts';").length > 0, '.mts import');
+  assert.ok(netViolations(f, "import x from '../data.json' with { type: 'json' };").length > 0, '.json import');
+  assert.ok(netViolations(f, "import { x } from '../http';").length > 0, '확장자 없는 import');
+  assert.deepEqual(netViolations(f, "import { x } from '../http.ts';"), []);
+  assert.deepEqual(netViolations('app/js/x.mts', ''), [], 'functions 밖은 대상 아님');
+});

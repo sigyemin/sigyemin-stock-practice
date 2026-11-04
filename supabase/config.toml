@@ -21,3 +21,10 @@ verify_jwt = false
 
 [functions.ref-sync]
 verify_jwt = false
+
+# M3: 사용자 JWT 를 코드에서 확인(publishable 키 방식)
+[functions.place-order]
+verify_jwt = false
+
+[functions.cancel-order]
+verify_jwt = false

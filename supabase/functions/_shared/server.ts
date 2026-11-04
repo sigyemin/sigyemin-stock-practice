@@ -75,6 +75,16 @@ export function jobDb(db: Db): JobDb {
       const { error } = await db.from('fx_rates').upsert({ rate_date: date, usdkrw, source, fetched_at: new Date().toISOString() });
       check(error, 'fx');
     },
+    async processOrders(market) {
+      const { data, error } = await db.rpc('process_orders', { p_market: market });
+      check(error, 'process_orders');
+      return Number(data) || 0;
+    },
+    async expireOrders(market) {
+      const { data, error } = await db.rpc('expire_orders', { p_market: market });
+      check(error, 'expire_orders');
+      return Number(data) || 0;
+    },
     async saveCalendar(rows) {
       if (rows.length === 0) return;
       const { error } = await db.from('market_calendar').upsert(rows);

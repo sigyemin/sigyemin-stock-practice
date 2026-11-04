@@ -36,9 +36,12 @@ export type JobDb = {
   saveCandles: (rows: CandleRow[]) => Promise<void>;
   saveFx: (date: string, usdkrw: number, source: string) => Promise<void>;
   saveCalendar: (rows: { market: 'KR' | 'US'; trade_date: string; is_open: boolean; source_url: string }[]) => Promise<void>;
+  // 주문 처리(M3): DB 함수 sp.process_orders / sp.expire_orders
+  processOrders: (market: 'KR' | 'US') => Promise<number>;
+  expireOrders: (market: 'KR' | 'US') => Promise<number>;
 };
 
-export type JobResult = { status: 'ok' | 'skipped' | 'error'; reason?: string; count?: number; errors?: string[] };
+export type JobResult = { status: 'ok' | 'skipped' | 'error'; reason?: string; count?: number; errors?: string[]; filled?: number; expired?: number };
 
 const int = (v: string | undefined, d: number) => {
   const n = Number(v);
@@ -100,7 +103,21 @@ export async function runTickKr(d: {
   }
   if (quotes.length) await d.db.saveQuotes(quotes);
   if (candles.length) await d.db.saveCandles(candles);
-  return { status: 'ok', count: quotes.length, errors };
+  const orders = await settleOrders(d.db, 'KR', isKrxOpen(d.now(), cal, 0), errors);
+  return { status: 'ok', count: quotes.length, errors, ...orders };
+}
+
+// 시세·봉 저장 뒤: 대기·예약 주문 처리, 정규장이 끝났으면 당일 만료
+async function settleOrders(db: JobDb, market: 'KR' | 'US', stillOpen: boolean, errors: string[]) {
+  let filled = 0;
+  let expired = 0;
+  try {
+    filled = await db.processOrders(market);
+    if (!stillOpen) expired = await db.expireOrders(market);
+  } catch (e) {
+    errors.push(`orders:${errCode(e)}`);
+  }
+  return { filled, expired };
 }
 
 // ───────── tick-us: Alpaca(IEX) ─────────
@@ -111,7 +128,10 @@ export async function runTickUs(d: { db: JobDb; alpaca: Alpaca | null; now: () =
   if (!isNyseOpen(now, cal, 5)) return { status: 'skipped', reason: 'market_closed' };
   if (!d.alpaca) return { status: 'error', reason: 'alpaca_not_configured' };
   const symbols = await d.db.watchSymbols('US', int(s.tick_max_symbols_us, 30));
-  if (symbols.length === 0) return { status: 'ok', count: 0, errors: [] };
+  if (symbols.length === 0) {
+    const errors: string[] = [];
+    return { status: 'ok', count: 0, errors, ...(await settleOrders(d.db, 'US', isNyseOpen(d.now(), cal, 0), errors)) };
+  }
 
   const errors: string[] = [];
   const quotes: QuoteRow[] = [];
@@ -140,7 +160,8 @@ export async function runTickUs(d: { db: JobDb; alpaca: Alpaca | null; now: () =
   }
   if (quotes.length) await d.db.saveQuotes(quotes);
   if (candles.length) await d.db.saveCandles(candles);
-  return { status: 'ok', count: quotes.length, errors };
+  const orders = await settleOrders(d.db, 'US', isNyseOpen(d.now(), cal, 0), errors);
+  return { status: 'ok', count: quotes.length, errors, ...orders };
 }
 
 // ───────── fx-sync: 수출입은행 매매기준율(없으면 저장하지 않음 → 읽는 쪽이 직전 고시값 사용) ─────────

@@ -381,11 +381,11 @@ select t.check(
   not exists (select 1 from aclexplode(p.proacl) a where a.grantee = 0 and a.privilege_type = 'EXECUTE')
     and p.proacl is not null
     and not has_function_privilege('anon', p.oid, 'EXECUTE')
-    and has_function_privilege('service_role', p.oid, 'EXECUTE') = (p.proname in ('kv_claim'))
-    and has_function_privilege('authenticated', p.oid, 'EXECUTE') = (p.proname in ('me', 'request_fund')),
+    and has_function_privilege('service_role', p.oid, 'EXECUTE') = (p.proname in ('kv_claim', 'process_orders', 'expire_orders', 'place_order_bot'))
+    and has_function_privilege('authenticated', p.oid, 'EXECUTE') = (p.proname in ('me', 'request_fund', 'place_order', 'cancel_order')),
   format('H4 sp.%s(%s) 실행 권한: PUBLIC·anon 없음, authenticated %s, service_role %s', p.proname, pg_get_function_identity_arguments(p.oid),
-         case when p.proname in ('me', 'request_fund') then '허용' else '없음' end,
-         case when p.proname in ('kv_claim') then '허용' else '없음' end),
+         case when p.proname in ('me', 'request_fund', 'place_order', 'cancel_order') then '허용' else '없음' end,
+         case when p.proname in ('kv_claim', 'process_orders', 'expire_orders', 'place_order_bot') then '허용' else '없음' end),
   coalesce(p.proacl::text, 'proacl null(기본 권한 = PUBLIC)'))
 from pg_proc p
 where p.pronamespace = 'sp'::regnamespace
