@@ -29,3 +29,14 @@ test('서버가 화면에 넘기는 오류 코드는 모두 한국어 안내가 
     assert.ok(ORDER_ERRORS[code], code);
   }
 });
+
+test('DB 가 기록하는 거부 사유(reject_reason)마다 한국어 안내가 있다(리뷰 U2)', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const dir = new URL('../../supabase/migrations/', import.meta.url);
+  const codes = new Set();
+  for (const f of readdirSync(dir)) {
+    for (const m of readFileSync(new URL(f, dir), 'utf8').matchAll(/reject_reason\s*=\s*'([a-z_]+)'/g)) codes.add(m[1]);
+  }
+  assert.ok(codes.size >= 4, [...codes].join(','));
+  for (const c of codes) assert.ok(ORDER_ERRORS[c], c);
+});

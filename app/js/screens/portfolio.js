@@ -17,12 +17,16 @@ export function portfolioScreen(me, data) {
   const history = el('div', { className: 'card' });
   const status = el('p', { className: 'notice', attrs: { role: 'status' } });
 
+  let seq = 0; // 참가자를 빨리 바꿀 때 늦게 온 이전 응답이 화면을 덮지 않게
   async function render() {
+    const my = ++seq;
     const pid = Number(pick.value);
     const mine = pid === me.participantId;
     try {
       const [pos, orders] = await Promise.all([loadPositions(pid), loadOrders(pid)]);
+      if (my !== seq) return;
       const quotes = await loadQuotes(pos);
+      if (my !== seq) return;
       const price = (m, s) => quotes.find((q) => q.market === m && q.symbol === s)?.price;
 
       holdings.replaceChildren(...(pos.length ? pos.map((p) => {
@@ -44,7 +48,7 @@ export function portfolioScreen(me, data) {
         const cur = currencyOf(o.market);
         const line = `${o.symbol} ${sideText(o.side)} ${typeText(o.order_type)} ${o.qty}주` +
           (o.limit_price ? ` @ ${formatMoney(cur, o.limit_price)}` : '') + ` · ${STATUS_TEXT[o.status]} · ${o.trade_date}` +
-          (o.fill_basis === '1d' ? ' · 지연 모드: D+1 체결' : '');
+          (o.fill_basis === '1d' ? ' · 일봉 기준' : '');
         const btn = mine && o.created_by === 'user'
           ? el('button', {
             text: '취소',
@@ -63,6 +67,7 @@ export function portfolioScreen(me, data) {
       }) : [el('p', { className: 'muted', text: '대기·예약 주문이 없습니다.' })]));
 
       const fills = await loadFills(orders.filter((o) => o.status === 'filled').map((o) => o.id));
+      if (my !== seq) return;
       history.replaceChildren(...(orders.length ? orders.map((o) => {
         const f = fills.find((x) => x.order_id === o.id);
         const cur = currencyOf(o.market);
@@ -75,7 +80,7 @@ export function portfolioScreen(me, data) {
         return el('div', { className: 'item' }, [el('p', { text: head }), body]);
       }) : [el('p', { className: 'muted', text: '주문 내역이 없습니다.' })]));
     } catch {
-      status.textContent = '내역을 불러오지 못했습니다.';
+      if (my === seq) status.textContent = '내역을 불러오지 못했습니다.';
     }
   }
   pick.addEventListener('change', render);
