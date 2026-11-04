@@ -68,11 +68,12 @@ export async function runTickKr(d: {
 }): Promise<JobResult> {
   const s = await d.db.settings();
   const plan = krPlan(parseKrMode(s.kr_quote_mode));
-  if (plan.provider !== 'kis') return { status: 'skipped', reason: 'mode_delayed' };
+  // 수집을 건너뛰더라도 지난 주문의 당일 만료는 한다(묶인 돈이 남지 않게, 리뷰 SP-028 M2)
+  if (plan.provider !== 'kis') return { status: 'skipped', reason: 'mode_delayed', ...(await expireOnly(d.db, 'KR')) };
   const start = d.now();
   const cal = await d.db.calendar('KR', localDate(KR_TZ, start));
-  if (!isKrxOpen(start, cal, 5)) return { status: 'skipped', reason: 'market_closed' };
-  if (!d.kis) return { status: 'error', reason: 'kis_not_configured' };
+  if (!isKrxOpen(start, cal, 5)) return { status: 'skipped', reason: 'market_closed', ...(await expireOnly(d.db, 'KR')) };
+  if (!d.kis) return { status: 'error', reason: 'kis_not_configured', ...(await expireOnly(d.db, 'KR')) };
 
   const symbols = await d.db.watchSymbols('KR', int(s.tick_max_symbols_kr, 20));
   const budget = int(s.tick_time_budget_ms, 100000);
@@ -107,6 +108,15 @@ export async function runTickKr(d: {
   return { status: 'ok', count: quotes.length, errors, ...orders };
 }
 
+// 수집하지 않는 실행에서도: 마감이 지난 1m 주문 만료(장중 주문은 건드리지 않는 DB 함수)
+async function expireOnly(db: JobDb, market: 'KR' | 'US') {
+  try {
+    return { expired: await db.expireOrders(market) };
+  } catch {
+    return { expired: 0, errors: ['orders:expire'] };
+  }
+}
+
 // 시세·봉 저장 뒤: 대기·예약 주문 처리, 정규장이 끝났으면 당일 만료
 async function settleOrders(db: JobDb, market: 'KR' | 'US', stillOpen: boolean, errors: string[]) {
   let filled = 0;
@@ -125,8 +135,8 @@ export async function runTickUs(d: { db: JobDb; alpaca: Alpaca | null; now: () =
   const s = await d.db.settings();
   const now = d.now();
   const cal = await d.db.calendar('US', localDate(US_TZ, now));
-  if (!isNyseOpen(now, cal, 5)) return { status: 'skipped', reason: 'market_closed' };
-  if (!d.alpaca) return { status: 'error', reason: 'alpaca_not_configured' };
+  if (!isNyseOpen(now, cal, 5)) return { status: 'skipped', reason: 'market_closed', ...(await expireOnly(d.db, 'US')) };
+  if (!d.alpaca) return { status: 'error', reason: 'alpaca_not_configured', ...(await expireOnly(d.db, 'US')) };
   const symbols = await d.db.watchSymbols('US', int(s.tick_max_symbols_us, 30));
   if (symbols.length === 0) {
     const errors: string[] = [];

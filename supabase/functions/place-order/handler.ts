@@ -26,7 +26,7 @@ export type OrderDeps = {
 // DB 가 돌려주는 오류 메시지 중 화면에 그대로 보여도 되는 것(나머지는 server_error)
 export const KNOWN_ERRORS = new Set([
   'invalid_side', 'invalid_type', 'invalid_qty', 'invalid_limit', 'unknown_instrument', 'tick_unknown', 'tick_mismatch',
-  'price_limit', 'krw_negative', 'quote_stale', 'no_quote', 'insufficient_funds', 'insufficient_qty',
+  'price_limit', 'krw_negative', 'quote_stale', 'no_quote', 'insufficient_funds', 'insufficient_qty', 'kr_delayed_orders_unavailable',
   'not_registered', 'forbidden', 'not_found', 'not_cancellable',
 ]);
 

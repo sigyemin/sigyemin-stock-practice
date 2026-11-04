@@ -101,7 +101,7 @@ test('tick-kr: 지연 모드면 외부 호출 없이 건너뜀', async () => {
   const { db } = memDb({ kr_quote_mode: 'delayed' });
   let called = false;
   const kis = new Proxy({}, { get: () => { called = true; return async () => ({}); } });
-  assert.deepEqual(await runTickKr({ db, kis, now: OPEN_KR, sleep: async () => {} }), { status: 'skipped', reason: 'mode_delayed' });
+  assert.deepEqual(await runTickKr({ db, kis, now: OPEN_KR, sleep: async () => {} }), { status: 'skipped', reason: 'mode_delayed', expired: 2 });
   assert.equal(called, false);
 });
 
@@ -243,4 +243,24 @@ test('tick: 시세 저장 뒤 주문 처리, 정규장이 끝난 유예 시간�
   u.db.watchSymbols = async () => [];
   const r4 = await runTickUs({ db: u.db, alpaca: { snapshots: async () => ({}), bars: async () => ({}) }, now: () => new Date('2026-11-02T21:03:00Z') });
   assert.deepEqual([r4.filled, r4.expired], [1, 2], '미국: 관심 종목이 없어도 주문은 처리·만료');
+});
+
+test('tick: 지연 모드·장 밖·키 없음으로 건너뛰어도 만료는 실행(리뷰 SP-028 M2)', async () => {
+  for (const [name, run] of [
+    ['KR 지연 모드', (db) => runTickKr({ db, kis: fakeKis(), now: OPEN_KR, sleep: async () => {} })],
+    ['KR 장 밖', (db) => runTickKr({ db, kis: fakeKis(), now: () => new Date('2026-11-04T09:00:00Z'), sleep: async () => {} })],
+    ['KR 키 없음', (db) => runTickKr({ db, kis: null, now: OPEN_KR, sleep: async () => {} })],
+    ['US 장 밖', (db) => runTickUs({ db, alpaca: null, now: () => new Date('2026-11-03T03:00:00Z') })],
+    ['US 키 없음', (db) => runTickUs({ db, alpaca: null, now: () => new Date('2026-11-02T16:00:00Z') })],
+  ]) {
+    const m = memDb(name === 'KR 지연 모드' ? { kr_quote_mode: 'delayed' } : {});
+    const r = await run(m.db);
+    assert.ok(r.status !== 'ok', name);
+    assert.equal(r.expired, 2, name);
+    assert.equal(m.saved.processed, undefined, `${name}: 처리는 안 함`);
+  }
+  const bad = memDb();
+  bad.db.expireOrders = async () => { throw new Error('x'); };
+  const r = await runTickKr({ db: bad.db, kis: null, now: OPEN_KR, sleep: async () => {} });
+  assert.deepEqual([r.reason, r.expired, r.errors], ['kis_not_configured', 0, ['orders:expire']], '만료 오류여도 원래 사유 유지');
 });

@@ -175,24 +175,32 @@ select t.ook((select f.fx_rate_trade from sp.fills f join sp.orders o on o.id = 
 select t.ook((select f.settle_date from sp.fills f join sp.orders o on o.id = f.order_id where o.participant_id = 3 and o.market = 'US' limit 1) = '2026-11-03',
             'F5 미국 결제일 T+1(추정) 기록');
 
--- ═════════ G. 지연 모드(일봉, 설계서 §3.3 예시) — 2026-11-06 금 ═════════
+-- ═════════ G. 지연 모드(일봉) — 2026-11-06 금 ═════════
+-- 지연 공급자(eod-kr)가 없어 일봉 주문은 받지 않는다(리뷰 SP-028 M2). process_orders 의 1d 경로는 직접 넣은 주문으로 시험(설계서 §3.3 예시).
 update sp.app_settings set value = 'delayed' where key = 'kr_quote_mode';
-do $$ declare a jsonb; b jsonb; m jsonb; x jsonb; begin
-  a := t.po(1::smallint, 'KR', '999990', 'buy', 'limit', 1, 70000, '2026-11-06 01:00:00+00');
-  b := t.po(1::smallint, 'KR', '999990', 'buy', 'limit', 1, 71000, '2026-11-06 01:00:00+00');
-  m := t.po(1::smallint, 'KR', '999990', 'buy', 'market', 1, null, '2026-11-06 01:00:00+00');
-  x := t.po(1::smallint, 'KR', '999990', 'buy', 'limit', 1, 69000, '2026-11-06 01:00:00+00');
-  perform t.ook(a->>'status' = 'open' and a->>'fill_basis' = '1d' and m->>'status' = 'open', 'G1 지연 모드: 장중 주문도 대기(일봉 기준)', m::text);
+select t.ook(t.po(1::smallint, 'KR', '999990', 'buy', 'limit', 1, 70000, '2026-11-06 01:00:00+00')->>'error' = 'kr_delayed_orders_unavailable',
+             'G0 지연 모드에서는 한국 주문 접수 거부(처리 작업 없음)');
+select t.ook(t.po(1::smallint, 'KR', '999990', 'buy', 'market', 1, null, '2026-11-06 01:00:00+00', true)->>'error' = 'kr_delayed_orders_unavailable',
+             'G0b 미리보기도 같은 안내');
+do $$ declare a bigint; b bigint; m bigint; x bigint; begin
+  insert into sp.orders (participant_id, market, symbol, side, order_type, trade_date, fill_basis, qty, limit_price, status, reserved_amount, created_at)
+  values (1, 'KR', '999990', 'buy', 'limit', '2026-11-06', '1d', 1, 70000, 'open', 70100, '2026-11-06 01:00:00+00') returning id into a;
+  insert into sp.orders (participant_id, market, symbol, side, order_type, trade_date, fill_basis, qty, limit_price, status, reserved_amount, created_at)
+  values (1, 'KR', '999990', 'buy', 'limit', '2026-11-06', '1d', 1, 71000, 'open', 71100, '2026-11-06 01:00:00+00') returning id into b;
+  insert into sp.orders (participant_id, market, symbol, side, order_type, trade_date, fill_basis, qty, limit_price, status, reserved_amount, created_at)
+  values (1, 'KR', '999990', 'buy', 'market', '2026-11-06', '1d', 1, null, 'open', 92000, '2026-11-06 01:00:00+00') returning id into m;
+  insert into sp.orders (participant_id, market, symbol, side, order_type, trade_date, fill_basis, qty, limit_price, status, reserved_amount, created_at)
+  values (1, 'KR', '999990', 'buy', 'limit', '2026-11-06', '1d', 1, 69000, 'open', 69100, '2026-11-06 01:00:00+00') returning id into x;
   perform t.candle('KR', '999990', '1d', '2026-11-05 15:00:00+00', 70500, 71800, 69900, 71000);  -- 11-06 00:00 한국
   perform sp.process_orders('KR', '2026-11-06 06:00:00+00');
-  perform t.ook((select status from sp.orders where id = (m->>'order_id')::bigint) = 'open', 'G2 장 마감 전에는 일봉으로 처리 안 함');
+  perform t.ook((select status from sp.orders where id = m) = 'open', 'G2 장 마감 전에는 일봉으로 처리 안 함');
   perform sp.expire_orders('KR', '2026-11-06 07:00:00+00');
-  perform t.ook((select status from sp.orders where id = (m->>'order_id')::bigint) = 'open', 'G3 일봉 주문은 마감 만료 대상 아님(일봉 올 때까지)');
+  perform t.ook((select status from sp.orders where id = m) = 'open', 'G3 일봉 주문은 마감 만료 대상 아님(일봉 올 때까지)');
   perform sp.process_orders('KR', '2026-11-06 07:00:00+00');
-  perform t.ook((select price from sp.fills where order_id = (a->>'order_id')::bigint) = 70000, 'G4 지정가 70,000 → 70,000 체결');
-  perform t.ook((select price from sp.fills where order_id = (b->>'order_id')::bigint) = 70500, 'G5 지정가 71,000 → 시가 70,500 체결');
-  perform t.ook((select price from sp.fills where order_id = (m->>'order_id')::bigint) = 71000, 'G6 시장가 → 종가 71,000');
-  perform t.ook((select status from sp.orders where id = (x->>'order_id')::bigint) = 'expired', 'G7 조건 안 맞는 지정가(69,000) → 만료');
+  perform t.ook((select price from sp.fills where order_id = a) = 70000, 'G4 지정가 70,000 → 70,000 체결');
+  perform t.ook((select price from sp.fills where order_id = b) = 70500, 'G5 지정가 71,000 → 시가 70,500 체결');
+  perform t.ook((select price from sp.fills where order_id = m) = 71000, 'G6 시장가 → 종가 71,000');
+  perform t.ook((select status from sp.orders where id = x) = 'expired', 'G7 조건 안 맞는 지정가(69,000) → 만료');
 end $$;
 update sp.app_settings set value = 'realtime' where key = 'kr_quote_mode';
 

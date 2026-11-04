@@ -372,6 +372,9 @@ begin
   -- 시세 모드 → 체결 기준
   select value into mode from sp.app_settings where key = 'kr_quote_mode';
   basis := case when p_market = 'KR' and mode is distinct from 'realtime' then '1d' else '1m' end;
+  -- 지연 모드(일봉) 주문을 처리·만료할 작업(eod-kr)이 아직 없다 → 묶인 돈이 풀리지 않으므로 받지 않는다(리뷰 SP-028 M2).
+  -- 지연 공급자를 구현할 때 이 줄을 지우고 process_orders 의 1d 경로를 쓴다.
+  if basis = '1d' then raise exception 'kr_delayed_orders_unavailable' using errcode = '22023'; end if;
 
   -- 거래일·장 상태
   today := sp.local_date(p_market, p_now);
@@ -509,8 +512,12 @@ declare
   px numeric;
   filled integer := 0;
   last_t timestamptz;
+  v_id bigint;
 begin
-  for o in select * from sp.orders where market = p_market and status in ('reserved','open') order by created_at, id loop
+  for v_id in select id from sp.orders where market = p_market and status in ('reserved','open') order by created_at, id loop
+    -- 루프 시작 때 읽은 값이 아니라 지금 값으로(처리 중 취소된 주문이 되살아나지 않게). 취소·체결과 같은 행 잠금으로 직렬화
+    select * into o from sp.orders where id = v_id for update;
+    if not found or o.status not in ('reserved','open') then continue; end if;
     s := sp.session(p_market, o.trade_date);
     if not s.is_open then continue; end if;
 
@@ -520,7 +527,7 @@ begin
       if q.base_price is not null and sp.local_date('KR', q.quote_at) = o.trade_date then
         lim := sp.kr_limits(q.base_price, o.trade_date);
         if o.limit_price > lim.upper or o.limit_price < lim.lower then
-          update sp.orders set status = 'rejected', reject_reason = 'price_limit', reserved_amount = 0, updated_at = now() where id = o.id;
+          update sp.orders set status = 'rejected', reject_reason = 'price_limit', reserved_amount = 0, updated_at = now() where id = o.id and status in ('reserved','open');
           continue;
         end if;
       end if;
@@ -538,7 +545,7 @@ begin
         when o.side = 'sell' and cnd.h >= o.limit_price then greatest(cnd.o, o.limit_price)
       end;
       if px is null then
-        update sp.orders set status = 'expired', reserved_amount = 0, updated_at = now() where id = o.id;
+        update sp.orders set status = 'expired', reserved_amount = 0, updated_at = now() where id = o.id and status in ('reserved','open');
       elsif sp._fill(o.id, px, s.close_at, 'candle:1d:' || cnd.source, cnd.t) = 'filled' then
         filled := filled + 1;
       end if;
@@ -558,7 +565,7 @@ begin
         continue;
       end if;
       -- 시가에 안 맞으면 대기 주문으로: 첫 봉부터 저·고가 검사
-      update sp.orders set status = 'open', checked_until = cnd.t - interval '1 millisecond', updated_at = now() where id = o.id;
+      update sp.orders set status = 'open', checked_until = cnd.t - interval '1 millisecond', updated_at = now() where id = o.id and status = 'reserved';
       o.status := 'open';
       o.checked_until := cnd.t - interval '1 millisecond';
     end if;
