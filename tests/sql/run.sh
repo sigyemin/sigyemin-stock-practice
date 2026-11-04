@@ -45,8 +45,10 @@ run "$ROOT/tests/sql/ops.test.sql"
 
 # kv_claim 동시 실행: 두 연결이 같은 키를 거의 동시에 claim → 하나만 true (행이 없을 때·있을 때 둘 다)
 echo "== concurrency"
-for KEY in conc_new conc_old; do
-  if [[ "$KEY" == conc_old ]]; then
+for CASE in new old; do
+  KEY=kis_token_issue_at
+  psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -c "delete from sp.server_kv where key = '$KEY'"
+  if [[ "$CASE" == old ]]; then
     psql "$DATABASE_URL" "${PSQL_OPTS[@]}" -c "insert into sp.server_kv (key, value, updated_at) values ('$KEY', 'x', now() - interval '1 hour')"
   fi
   A_OUT="$(mktemp)"
@@ -56,9 +58,9 @@ for KEY in conc_new conc_old; do
   wait "$A_PID"
   A="$(grep -E '^[tf]$' "$A_OUT" | head -1)"
   rm -f "$A_OUT"
-  echo "$KEY: A=$A B=$B"
+  echo "$CASE: A=$A B=$B"
   if [[ "$A" != "t" || "$B" != "f" ]]; then
-    echo "FAIL kv_claim concurrency ($KEY)"; exit 1
+    echo "FAIL kv_claim concurrency ($CASE)"; exit 1
   fi
 done
 echo "PASS kv_claim concurrency (2)"

@@ -26,10 +26,10 @@ export class AlpacaError extends Error {
   }
 }
 
-export type AlpacaDeps = { keyId: string; secretKey: string; fetch: FetchLike };
+export type AlpacaDeps = { keyId: string; secretKey: string; transport: FetchLike }; // 실제 네트워크 함수. 아래에서 허용 목록으로 감싼다
 
 export function createAlpaca(deps: AlpacaDeps) {
-  const f = guardedFetch(ALPACA_ALLOW, deps.fetch);
+  const f = guardedFetch(ALPACA_ALLOW, deps.transport);
   const headers = { 'APCA-API-KEY-ID': deps.keyId, 'APCA-API-SECRET-KEY': deps.secretKey };
 
   async function get(url: string) {

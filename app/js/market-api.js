@@ -74,10 +74,13 @@ export async function saveDrawing(row) {
   return ok(await db().from('drawings').insert(row).select('id').single());
 }
 
+// RLS 로 남의 그림은 0행이 되므로, 바뀐 행이 없으면 실패로 본다
 export async function updateDrawingPoints(id, points) {
-  ok(await db().from('drawings').update({ points }).eq('id', id));
+  const rows = ok(await db().from('drawings').update({ points }).eq('id', id).select('id'));
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('drawing_not_updated');
 }
 
 export async function deleteDrawing(id) {
-  ok(await db().from('drawings').delete().eq('id', id));
+  const rows = ok(await db().from('drawings').delete().eq('id', id).select('id'));
+  if (!Array.isArray(rows) || rows.length === 0) throw new Error('drawing_not_deleted');
 }
